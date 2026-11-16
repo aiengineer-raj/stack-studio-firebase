@@ -1,0 +1,17 @@
+# Downloaded packages (restored with "npm install")
+node_modules/
+
+# Firebase deploy cache and logs
+.firebase/
+*.log
+
+# Windows thumbnails
+Thumbs.db
+
+# Never upload keys or passwords
+*serviceAccount*.json
+*-adminsdk-*.json
+*.pem
+*.key
+.env.local
+.secret.local

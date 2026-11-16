@@ -1,0 +1,127 @@
+rules_version = '2';
+
+/**
+ * Firestore security rules for Stack Studio.
+ *
+ * THIS FILE IS THE ACTUAL SECURITY BOUNDARY. The UI hiding a button and the
+ * client code not asking for a document are conveniences; these rules are
+ * what stops someone reading another engineer's design straight out of the
+ * database with the browser console open. Everything here is enforced by
+ * Firestore itself, server-side, no matter what the client sends.
+ *
+ * Model agreed for Veda:
+ *   - A design is PRIVATE to the engineer who created it, by default.
+ *   - That engineer may flip `shared: true` to let the rest of Veda read it.
+ *   - Shared means SHARED-READ, not shared-write: only the owner can ever
+ *     edit or delete their own design.
+ */
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // Restricts access to signed-in Veda accounts. With OTP sign-in, this
+    // check IS the domain restriction at the database layer -- there is no
+    // separate identity-provider boundary the way Microsoft tenant pinning
+    // provided. It mirrors the same check Cloud Functions' requestOtp does
+    // before ever emailing a code (functions/index.js) and the constant in
+    // firebase-init.js -- three places carrying the same domain string, by
+    // necessity (see the comment on ALLOWED_EMAIL_DOMAIN there).
+    function vedaAccount() {
+      return signedIn()
+        && request.auth.token.email != null
+        && request.auth.token.email.lower().matches('.*@vedaengg[.]com');
+    }
+
+    function isOwner(doc) {
+      return signedIn() && doc.data.ownerUid == request.auth.uid;
+    }
+
+    match /designs/{designId} {
+
+      // Read your own always; read someone else's only when they shared it.
+      allow read: if vedaAccount()
+                  && (isOwner(resource) || resource.data.shared == true);
+
+      // On create, the client does not get to nominate an owner: the owner
+      // must be the caller. Without this, anyone could write a document
+      // claiming someone else owns it.
+      allow create: if vedaAccount()
+                    && request.resource.data.ownerUid == request.auth.uid
+                    && request.resource.data.tool is string
+                    && request.resource.data.name is string
+                    && request.resource.data.shared is bool;
+
+      // Only the owner edits, and ownership itself is immutable — a design
+      // cannot be reassigned to another user by an update.
+      allow update: if vedaAccount()
+                    && isOwner(resource)
+                    && request.resource.data.ownerUid == resource.data.ownerUid;
+
+      allow delete: if vedaAccount() && isOwner(resource);
+    }
+
+    /**
+     * Audit log — append-only.
+     *
+     * Create is allowed; UPDATE AND DELETE ARE NOT, for anyone, including
+     * the person who wrote the entry. That is the whole point: a history
+     * that its own subject can quietly rewrite is not a history.
+     *
+     * Honest limit: "append-only" here holds against the app and its users,
+     * not against whoever administers the Firebase project — they can edit
+     * these rules or write through the Admin SDK, which bypasses rules
+     * entirely. For a trail that resists even that, entries would have to
+     * be written by a Cloud Function with clients denied write access
+     * outright (Blaze plan). This is tamper-RESISTANT, not tamper-proof.
+     */
+    match /auditLog/{entryId} {
+
+      // Anyone at Veda can read the history of a design they can already
+      // see. Firestore cannot join across collections to verify that here,
+      // so this deliberately allows any signed-in Veda account to read
+      // audit entries. The entries hold no design data — only who did what
+      // and when — so this is a far smaller exposure than the designs
+      // themselves, which stay properly restricted above.
+      allow read: if vedaAccount();
+
+      // The actor must be the caller: nobody writes history in someone
+      // else's name.
+      allow create: if vedaAccount()
+                    && request.resource.data.actorUid == request.auth.uid
+                    && request.resource.data.eventType is string;
+
+      allow update, delete: if false;
+    }
+
+    /**
+     * otp_requests and rate_limit_events — used by Cloud Functions only.
+     *
+     * Explicitly denied here rather than left to the catch-all at the
+     * bottom of this file, on purpose: these two collections hold
+     * security-bearing state (bcrypt-hashed codes, attempt counts, request
+     * timestamps), and a reader should not have to trust "nothing else
+     * matched it" to know they are locked down. Cloud Functions read and
+     * write them through the Admin SDK, which bypasses these rules
+     * entirely -- that is what makes Cloud Functions "trusted" and the
+     * browser client "untrusted" in this design. No client should ever
+     * need to touch either collection directly, under any circumstance.
+     */
+    match /otp_requests/{requestId} {
+      allow read, write: if false;
+    }
+    match /rate_limit_events/{eventId} {
+      allow read, write: if false;
+    }
+
+    // Anything not matched above is denied. Adding a new collection later
+    // means adding its rules here deliberately — the default is no access,
+    // which is the right default.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

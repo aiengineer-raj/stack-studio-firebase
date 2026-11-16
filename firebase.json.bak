@@ -1,0 +1,125 @@
+{
+  "hosting": [
+    {
+      "site": "veplworks",
+      "public": "preview",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "rewrites": [
+        {
+          "source": "/api/engine/**",
+          "function": {
+            "functionId": "engine",
+            "region": "asia-south1"
+          }
+        },
+        {
+          "source": "**",
+          "destination": "/stack-studio.html"
+        }
+      ],
+      "headers": [
+        {
+          "source": "/stack-studio.html",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, max-age=0"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "site": "veplworks-home",
+      "public": "landing",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "headers": [
+        {
+          "source": "/index.html",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, max-age=0"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "public": "workboard/public",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "rewrites": [
+        {
+          "source": "/api/**",
+          "function": {
+            "functionId": "workboardApi",
+            "region": "asia-south1"
+          }
+        }
+      ],
+      "headers": [
+        {
+          "source": "**",
+          "headers": [
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "no-referrer"
+            },
+            {
+              "key": "X-Frame-Options",
+              "value": "DENY"
+            },
+            {
+              "key": "Cache-Control",
+              "value": "no-store"
+            }
+          ]
+        }
+      ],
+      "site": "veplworks-workboard-edb56"
+    }
+  ],
+  "firestore": [
+    {
+      "rules": "firestore.rules",
+      "indexes": "firestore.indexes.json",
+      "database": "(default)"
+    },
+    {
+      "database": "vepl-workboard",
+      "rules": "workboard/firestore.rules"
+    }
+  ],
+  "functions": [
+    {
+      "source": "functions",
+      "runtime": "nodejs20"
+    },
+    {
+      "source": "workboard/functions",
+      "codebase": "vepl-workboard",
+      "runtime": "nodejs22"
+    },
+    {
+      "source": "engine-proxy",
+      "codebase": "engine",
+      "runtime": "nodejs20"
+    }
+  ]
+}
