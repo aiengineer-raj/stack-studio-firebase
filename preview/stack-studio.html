@@ -2204,7 +2204,7 @@ body:has(.app) { background:#d4d0c8; font-size:11px; }
       <button id="f-export" title="Download as a .stack.json file">Export</button>
       <button id="f-import" title="Open a .stack.json file">Open</button>
       <button id="f-library" title="Saved designs" aria-expanded="false">Library</button>
-      <input id="f-file" type="file" accept=".json,application/json" hidden />
+      <input id="f-file" type="file" accept=".json,.stack,application/json" hidden />
     </div>
     <div id="library" class="library" hidden></div>
     <div class="unit-toggle" role="group" aria-label="Unit system">
@@ -2212,7 +2212,8 @@ body:has(.app) { background:#d4d0c8; font-size:11px; }
       <button id="u-si" aria-pressed="false">SI</button>
     </div>
     <span id="overall"></span>
-    <button class="pill" style="cursor:pointer;background:none;color:var(--fg-2)" onclick="window.print()">Print report</button>
+    <button id="f-run" class="pill" hidden style="cursor:pointer;background:none;color:var(--fg)" title="Run the analysis (F5)" onclick="window.__ssRun&&window.__ssRun()">Run analysis</button>
+    <button class="pill" style="cursor:pointer;background:none;color:var(--fg-2)" onclick="window.__ssPrint ? window.__ssPrint() : window.print()">Print report</button>
     <button id="f-word" class="pill" style="cursor:pointer;background:none;color:var(--fg-2)" title="Download the report as a Word file (.docx)" onclick="window.exportWordReport&&window.exportWordReport(this)">Word report</button>
     <button id="f-signout" class="pill" style="cursor:pointer;background:none;color:var(--fg-2)" title="Sign out of your account">Sign out</button>
   </header>
@@ -2375,6 +2376,7 @@ var Engine = (() => {
     platformArea: () => platformArea,
     projectedArea: () => projectedArea,
     reconcileBom: () => reconcileBom,
+    setProgress: () => (fn) => { progressHook = typeof fn === "function" ? fn : null; },
     resolveBasePartsWeight: () => resolveBasePartsWeight,
     riskCoefficientK1: () => riskCoefficientK1,
     sanitizeDxfText: () => sanitizeDxfText,
@@ -4579,6 +4581,27 @@ var Engine = (() => {
       moves.push(`Tower scaled to a top platform at ${r2(top)} m (1.5 m below the stack top).`);
       top = r2(top);
     }
+    // Stack taller than the tower: add panels at the tower's usual panel height up to a top platform 1.5 m below the
+    // stack top, and tie levels at the tower's usual tie spacing (the top platform is always tied). Not for tapered towers,
+    // whose taper is set by the user.
+    if (top < H - 1.5 - 0.5 && !towerIsTapered(T)) {
+      const target = H - 1.5, r20 = (v) => Math.round(v * 20) / 20;
+      const lv = [...new Set(T.levels)].sort((a, b) => a - b);
+      const gaps = lv.slice(1).map((v, i) => v - lv[i]).sort((a, b) => a - b);
+      const pan = Math.max(1.5, Math.min(3.5, gaps[Math.floor(gaps.length / 2)] || 3));
+      const n = Math.max(1, Math.ceil((target - top) / pan - 1e-9)), step = (target - top) / n;
+      const added = [];
+      for (let k = 1; k <= n; k++) added.push(k === n ? r20(target) : r20(top + k * step));
+      T.levels = [...lv, ...added];
+      const tl = [...new Set(T.tieLevels)].sort((a, b) => a - b);
+      const tg = tl.slice(1).map((v, i) => v - tl[i]).sort((a, b) => a - b);
+      const tsp = tg.length ? tg[Math.floor(tg.length / 2)] : 5;
+      const newTies = []; let last = tl.length ? tl[tl.length - 1] : top;
+      added.forEach((l, k) => { if (l - last >= tsp - 1e-6 || k === added.length - 1) { newTies.push(l); last = l; } });
+      T.tieLevels = [...tl, ...newTies];
+      moves.push(`Tower extended to a top platform at ${r20(target)} m (1.5 m below the stack top): ${added.length} level${added.length > 1 ? "s" : ""} added about ${round2(step, 2)} m apart, tie level${newTies.length > 1 ? "s" : ""} added at ${newTies.join(", ")} m. Member sizes are not changed: check them under Tower.`);
+      top = r20(target);
+    } else if (top < H - 1.5 - 0.5) moves.push(`Tapered tower: its top platform (${top} m) is below the stack top less 1.5 m; extend the levels under Tower.`);
     T.levels = [...new Set(T.levels)].sort((a, b) => a - b);
     if (!towerIsTri(T) && !towerIsTapered(T) && towerLadderPosition(T) === "inside" && T.baseWidth / 2 - T.tieHalfSize < 1.0) {
       T.ladderPosition = "outsideAlternate";
@@ -4685,6 +4708,7 @@ var Engine = (() => {
     const idx = new Map(ids.map((id, i) => [id, i])); const n = ids.length * 6;
     const restrained = new Uint8Array(n);
     for (const [id, f3] of model.supports) for (let d = 0; d < 6; d++) if (f3[d]) restrained[idx.get(id) * 6 + d] = 1;
+    for (const id of model.twistLock || []) restrained[idx.get(id) * 6 + 4] = 1;   // see buildTower: stack twist about its own axis
     const mem = new Map(); const K = new Float64Array(n * n);
     for (const m of model.members) {
       const { L, R } = twAxes(model.nodes.get(m.i), model.nodes.get(m.j));
@@ -4770,9 +4794,28 @@ var Engine = (() => {
       return [-F[0], -F[1], -F[2], -M[0], -M[1], -M[2]];
     };
     // lowest modes, lumped translational masses (Map node -> mass, kg*s2/m), subspace iteration
+    let factorBand = null;
     const modes = (massByNode, nModes = 3, iters = 60, dofs = [0, 1, 2]) => {
       const Md = new Float64Array(nf);
       for (let a = 0; a < nf; a++) { const g = free[a], node = ids[Math.floor(g / 6)], d = g % 6; if (dofs.includes(d)) Md[a] = massByNode.get(node) || 0; }
+      // Same model, same masses, same settings as an earlier call (every number equal): the answer is the same,
+      // so reuse it. A change recalculates the design two or three times (base-parts weight iteration) with the
+      // tower unchanged; this avoids repeating the mode extraction each time. Exact by construction.
+      const dofKey = dofs.join(",");
+      if (!factorBand) {   // the factorised band of Kf: everything cholSolve reads
+        let len = 0; for (let i = 0; i < nf; i++) len += i - first[i] + 1;
+        factorBand = new Float64Array(len); let w = 0;
+        for (let i = 0; i < nf; i++) for (let k = first[i]; k <= i; k++) factorBand[w++] = Kf[i * nf + k];
+      }
+      const hit = twModesCache.find((c) => c.nModes === nModes && c.iters === iters && c.dofKey === dofKey && c.nf === nf &&
+        twSameArr(c.Md, Md) && twSameArr(c.free, free) && twSameArr(c.ids, ids) && twSameArr(c.first, first) && twSameArr(c.band, factorBand));
+      if (hit) {
+        globalThis.__twModesStats && (globalThis.__twModesStats.hit += 1);
+        twModesCache.splice(twModesCache.indexOf(hit), 1); twModesCache.push(hit);
+        const outC = hit.vals.map((v) => ({ frequency: v.frequency, period: v.period, phi: Float64Array.from(v.phi) }));
+        outC.Md = Md; outC.dofOf = (a) => free[a] % 6; outC.nodeOf = (a) => ids[Math.floor(free[a] / 6)];
+        return outC;
+      }
       const p = Math.min(2 * nModes, nModes + 8); let X = [];
       for (let k = 0; k < p; k++) { const v = new Float64Array(nf); for (let a = 0; a < nf; a++) v[a] = Md[a] * (Math.sin(1.3 * a * (k + 1) + k) + (a % (k + 2) === 0 ? 1 : 0)); X.push(v); }
       let lam = [], prev = null;
@@ -4788,9 +4831,23 @@ var Engine = (() => {
       }
       const out = lam.slice(0, nModes).map((l, k) => ({ frequency: Math.sqrt(Math.max(l, 0)) / (2 * Math.PI), period: 2 * Math.PI / Math.sqrt(Math.max(l, 1e-12)), phi: X[k] }));
       out.Md = Md; out.dofOf = (a) => free[a] % 6; out.nodeOf = (a) => ids[Math.floor(free[a] / 6)];
+      twModesCache.push({ nModes, iters, dofKey, nf, Md: Float64Array.from(Md), free: free.slice(), ids: ids.slice(), first: Int32Array.from(first), band: factorBand,
+        vals: out.map((m) => ({ frequency: m.frequency, period: m.period, phi: Float64Array.from(m.phi) })) });
+      while (twModesCache.length > TW_MODES_CACHE_MAX || (twModesCache.length > 1 && twModesCache.reduce((s, c) => s + twCacheBytes(c), 0) > TW_MODES_CACHE_BYTES)) twModesCache.shift();
+      globalThis.__twModesStats && (globalThis.__twModesStats.miss += 1);
       return out;
     };
     return { run, results, station, disp, modes, members: mem, weak: weak.map((g) => ({ node: ids[Math.floor(g / 6)], dof: g % 6 })), ids, dofCount: nf };
+  }
+  // Mode results kept for reuse by frameAnalyse().modes (see there): the most recent ones, within a memory budget.
+  const TW_MODES_CACHE_MAX = 40, TW_MODES_CACHE_BYTES = 96e6;
+  const twModesCache = [];
+  const twCacheBytes = (c) => 8 * (c.band.length + c.Md.length + c.vals.reduce((s, v) => s + v.phi.length, 0)) + 4 * c.first.length;
+  function twSameArr(a, b) {
+    if (a === b) return true;
+    if (!a || !b || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) { const x = a[i], y = b[i]; if (x !== y && !(x !== x && y !== y)) return false; }
+    return true;
   }
   function twGenEig(K, M) {
     const p = K.length; const Lm = M.map((r) => r.slice());
@@ -4956,11 +5013,16 @@ var Engine = (() => {
     const supports = new Map(); const legFix = T.legSupport === "pinned" ? [1, 1, 1, 0, 0, 0] : [1, 1, 1, 1, 1, 1];
     levelNodes.get(0).legs.forEach((id) => supports.set(id, legFix));
     supports.set(stackNodes[0], T.stackBase === "pinned" ? [1, 1, 1, 0, 0, 0] : [1, 1, 1, 1, 1, 1]);
+    // A pinned stack base leaves the stack free to twist about its own axis: the tie struts are radial and pinned at
+    // the stack, so nothing resists that twist and the stiffness matrix is singular (whether the solver notices depends
+    // on round-off). The twist carries no load, so it is held at the base in the analysis only (as STAAD does for a zero-
+    // stiffness direction); the support itself stays PINNED in the report and the STAAD file.
+    const twistLock = T.stackBase === "pinned" ? [stackNodes[0]] : [];
     const editLog = applyTowerEdits(T, nodes, members, addMember);
     const used = new Set(); members.forEach((m) => { used.add(m.i); used.add(m.j); });
     for (const id of [...nodes.keys()]) if (!used.has(id)) nodes.delete(id);
     const lo = (y) => c - wAt(y) / 2, hi = (y) => c + wAt(y) / 2;
-    return { T, W, c, a, levels, allLevels, top, ties, nodes, members, supports, stackNodes, stackEls: els, stackMembers, legBase: levelNodes.get(0).legs, levelNodes, decks, deckInfo, deckMiss, ladderPos, flights: [], hatches: [], railGaps: [],
+    return { T, W, c, a, levels, allLevels, top, ties, nodes, members, supports, twistLock, stackNodes, stackEls: els, stackMembers, legBase: levelNodes.get(0).legs, levelNodes, decks, deckInfo, deckMiss, ladderPos, flights: [], hatches: [], railGaps: [],
       tapered, Wtop: Wt, taperTopEl: yTaper, wAt, lo, hi, panelPattern, tri: true, nLegs: 3, inside, legXZ, pfAt, paAt, editLog,
       ladderMoved: p0 !== "stack" && p0 !== "outside" };
   }
@@ -5146,11 +5208,16 @@ var Engine = (() => {
     const legFix = T.legSupport === "pinned" ? [1, 1, 1, 0, 0, 0] : [1, 1, 1, 1, 1, 1];
     levelNodes.get(0).legs.forEach((id) => supports.set(id, legFix));
     supports.set(stackNodes[0], T.stackBase === "pinned" ? [1, 1, 1, 0, 0, 0] : [1, 1, 1, 1, 1, 1]);
+    // A pinned stack base leaves the stack free to twist about its own axis: the tie struts are radial and pinned at
+    // the stack, so nothing resists that twist and the stiffness matrix is singular (whether the solver notices depends
+    // on round-off). The twist carries no load, so it is held at the base in the analysis only (as STAAD does for a zero-
+    // stiffness direction); the support itself stays PINNED in the report and the STAAD file.
+    const twistLock = T.stackBase === "pinned" ? [stackNodes[0]] : [];
     // orphan check
     const editLog = applyTowerEdits(T, nodes, members, addMember);
     const used = new Set(); members.forEach((m) => { used.add(m.i); used.add(m.j); });
     for (const id of [...nodes.keys()]) if (!used.has(id)) nodes.delete(id);
-    return { T, W, c, a, levels, allLevels, top, ties, nodes, members, supports, stackNodes, stackEls: els, stackMembers, legBase: levelNodes.get(0).legs, levelNodes, decks, deckInfo, deckMiss, ladderPos, flights, hatches, railGaps,
+    return { T, W, c, a, levels, allLevels, top, ties, nodes, members, supports, twistLock, stackNodes, stackEls: els, stackMembers, legBase: levelNodes.get(0).legs, levelNodes, decks, deckInfo, deckMiss, ladderPos, flights, hatches, railGaps,
       editLog, tapered, Wtop: Wt, taperTopEl: yTaper, wAt, lo, hi, panelPattern };
   }
 
@@ -5464,7 +5531,7 @@ var Engine = (() => {
     const t0 = Date.now();
     const tw = ctx ? ctx.tw : buildTower(input, segments, E_stack);
     const T = tw.T;
-    const fa = ctx ? ctx.fa : frameAnalyse({ nodes: tw.nodes, members: tw.members, supports: tw.supports });
+    const fa = ctx ? ctx.fa : frameAnalyse({ nodes: tw.nodes, members: tw.members, supports: tw.supports, twistLock: tw.twistLock });
     const { cases, zones, shares } = towerLoadCases(input, tw, loads, stackWind, ka);
     for (const lc of cases) fa.run(lc);
     // second-order (P-delta) run of the wind cases: geometric stiffness from the gravity axial forces of the design loads
@@ -5475,7 +5542,7 @@ var Engine = (() => {
       for (const m of tw.members) { const e = fa.members.get(m.id); const nm = (fa.station("DL", m.id, e.L / 2)[0] + fa.station("LL", m.id, e.L / 2)[0]) * gam; if (Math.abs(nm) > 1e-6) geoN.set(m.id, nm); }
       const topN = tw.stackNodes[tw.stackNodes.length - 1], legTop = tw.levelNodes.get(tw.top).legs;
       const d1 = {}; for (const lc of cases.filter((c3) => c3.set)) { d1[lc.id] = { stack: Math.hypot(...[0, 2].map((k) => fa.disp(lc.id, topN)[k])), tower: Math.max(...legTop.map((n2) => Math.hypot(fa.disp(lc.id, n2)[0], fa.disp(lc.id, n2)[2]))), legs: tw.legBase.map((n2) => fa.results.get(lc.id).reactions.get(n2)[1]) }; }
-      const fa2 = frameAnalyse({ nodes: tw.nodes, members: tw.members, supports: tw.supports }, { geoN });
+      const fa2 = frameAnalyse({ nodes: tw.nodes, members: tw.members, supports: tw.supports, twistLock: tw.twistLock }, { geoN });
       let ampS = 1, ampT = 1, ampL = 1, gov = null;
       for (const lc of cases.filter((c3) => c3.set)) {
         const res = fa2.run(lc); fa.results.set(lc.id, res);
@@ -6087,7 +6154,10 @@ var Engine = (() => {
     const tauC = (pt) => { const p = Math.min(Math.max(pt, 0.15), 3); const beta = Math.max(1, 0.8 * fck / (6.89 * p)); return 0.85 * Math.sqrt(0.8 * fck) * (Math.sqrt(1 + 5 * beta) - 1) / (6 * beta); };
     const xuMax = fyr <= 250 ? 0.53 : fyr <= 415 ? 0.48 : fyr <= 500 ? 0.46 : 0.44, muCoef = 0.36 * xuMax * (1 - 0.42 * xuMax);
     const ast = (Mu, b, d) => { const k = Mu / (fck * b * d * d); if (k > muCoef) return Infinity; return 0.5 * fck / fyr * b * d * (1 - Math.sqrt(Math.max(0, 1 - 4.6 * k))); };
-    const evalRaft = (L, Dmm) => {
+    // soilOnly: when the soil / overturning / sliding check already fails (ratio > 1) the trial can never be
+    // chosen (its full ratio is at least the soil ratio), so the moment grid below is skipped. Used only for
+    // trials whose result is thrown away; the returned raft is always fully evaluated.
+    const evalRaft = (L, Dmm, soilOnly) => {
       const Dm = Dmm / 1e3, A = L * L;
       const Wself = A * Dm * rhoC + (nL * cl * cl + cs * cs) * hp * rhoC + (A - nL * cl * cl - cs * cs) * backH * rhoS;
       const dl = resultant(tw.dlReactions, Dm);
@@ -6102,6 +6172,7 @@ var Engine = (() => {
         const ratio = Math.max(sbc > 0 ? q / sbc : 0, fosReq / fos, fosSl / fsl, full ? 0 : 1.0001 * 0 );
         if (!soil || ratio > soil.ratio) soil = { ratio, combo: row.name, V, ex, ez, full, q, fos, fsl, Mot, H: r.H };
       }
+      if (soilOnly && soil.ratio > 1) return { L, Dmm, Wself, soil, ratio: soil.ratio, ok: false, soilOnly: true };
       // factored combinations: net upward pressure from the structure loads (raft, pedestals and backfill weigh on the soil directly)
 
       // Rigid raft statics under each factored combination: linear soil pressure (or Meyerhof's uniform pressure on the
@@ -6112,6 +6183,17 @@ var Engine = (() => {
       const d = Dmm - cover - 1.5 * dBar;                                          // mm, mean of the two layers
       const wself = Wself / A;
       let MposMax = 0, MnegMax = 0, Vmax = 0, gov = null, qu = 0;
+      const ov = Math.max(0, (L - W) / 2 - cl / 2);
+      const legPu = Math.max(...tw.lsReactions.flatMap((row) => row.legs.map((x) => x[1]))), Pu = kN(legPu);
+      const b0 = Math.min(4 * (cl * 1e3 + d), 2 * (ov * 1e3 + cl * 1e3 + d / 2) + 2 * (cl * 1e3 + d));   // punching perimeter, edge-limited
+      const tauP = Pu * 1e3 / (b0 * d), tauPall = 0.25 * Math.sqrt(fck);   // soil reaction inside the perimeter conservatively ignored; ks = 1 (square pedestal)   // IS 456 cl 31.6.3.1
+      // uplift: anchor bolt bond length in the pedestal + raft (IS 456 cl 26.2.1, plain bar tau_bd, bolts treated as plain)
+      const tauBd = { 20: 1.2, 25: 1.4, 30: 1.5, 35: 1.7, 40: 1.9 }[Math.min(40, Math.max(20, Math.round(fck / 5) * 5))] ?? 1.4;
+      const Tb = tw.bolts?.worst?.Tb ? kN(tw.bolts.worst.Tb) * (tw.method === "LS" ? 1 : 1.5) : 0;   // factored pull per bolt
+      const Ld = Tb > 0 ? Tb * 1e3 / (Math.PI * T.legBolts.dia * tauBd) : 0, Lavail = hp * 1e3 + Dmm - cover;
+      // A trial that already fails on punching or bolt bond (neither uses the bending grid) can never be chosen,
+      // so a trial that is only being tried (soilOnly) skips the grid. The raft that is returned is evaluated in full.
+      if (soilOnly && (tauP / tauPall > 1 + 1e-9 || (Lavail > 0 ? Ld / Lavail : 9) > 1 + 1e-9)) return { L, Dmm, Wself, soil, ratio: Math.max(soil.ratio, tauP / tauPall, Lavail > 0 ? Ld / Lavail : 9), ok: false, soilOnly: true };
       const legFace = [W / 2 + cl / 2 + d / 1e3, W / 2 - cl / 2 - d / 1e3];
       for (const row of tw.lsReactions) {
         const r = resultant(row, Dm), V = r.V + Wself, exs = r.Mz / V, ezs = r.Mx / V, ex = Math.abs(exs), ez = Math.abs(ezs);
@@ -6133,20 +6215,12 @@ var Engine = (() => {
         let qmax = 0; for (let u = 0; u < NG; u++) for (let v = 0; v < NG; v++) qmax = Math.max(qmax, q(-half + (u + 0.5) * L / NG, -half + (v + 0.5) * L / NG) - wself); qu = Math.max(qu, qmax);
       }
       const Mov = 1.5 * MposMax / L, Mspan = 1.5 * MnegMax / L;                    // kN m per metre: bottom (soil up) / top steel
-      const ov = Math.max(0, (L - W) / 2 - cl / 2);
       const astB = Math.max(ast(Mov * 1e6, 1000, d), 0.0012 * 1000 * Dmm), astT = Math.max(ast(Mspan * 1e6, 1000, d), 0.0012 * 1000 * Dmm);
       const sp = (a0) => Number.isFinite(a0) ? Math.min(Math.floor(Math.PI / 4 * dBar * dBar * 1000 / a0 / 10) * 10, 300, 3 * d) : 0;
       const spB = sp(astB), spT = sp(astT);
       const pt = 100 * (spB > 0 ? Math.PI / 4 * dBar * dBar * 1000 / Math.min(spB, spT || spB) : 0) / (1000 * d);
       const kS = Dmm >= 300 ? 1 : 1.1;
       const Vone = 1.5 * Vmax / L, tauV = Vone * 1e3 / (1000 * d), tc = kS * tauC(pt);   // kN per metre at d from the leg pedestal faces
-      const legPu = Math.max(...tw.lsReactions.flatMap((row) => row.legs.map((x) => x[1]))), Pu = kN(legPu);
-      const b0 = Math.min(4 * (cl * 1e3 + d), 2 * (ov * 1e3 + cl * 1e3 + d / 2) + 2 * (cl * 1e3 + d));   // punching perimeter, edge-limited
-      const tauP = Pu * 1e3 / (b0 * d), tauPall = 0.25 * Math.sqrt(fck);   // soil reaction inside the perimeter conservatively ignored; ks = 1 (square pedestal)   // IS 456 cl 31.6.3.1
-      // uplift: anchor bolt bond length in the pedestal + raft (IS 456 cl 26.2.1, plain bar tau_bd, bolts treated as plain)
-      const tauBd = { 20: 1.2, 25: 1.4, 30: 1.5, 35: 1.7, 40: 1.9 }[Math.min(40, Math.max(20, Math.round(fck / 5) * 5))] ?? 1.4;
-      const Tb = tw.bolts?.worst?.Tb ? kN(tw.bolts.worst.Tb) * (tw.method === "LS" ? 1 : 1.5) : 0;   // factored pull per bolt
-      const Ld = Tb > 0 ? Tb * 1e3 / (Math.PI * T.legBolts.dia * tauBd) : 0, Lavail = hp * 1e3 + Dmm - cover;
       const flexOver = !Number.isFinite(astB) || !Number.isFinite(astT) || (spB > 0 && spB < 100) || (spT > 0 && spT < 100);   // bars closer than 100 mm: deepen the raft
       const ratio = Math.max(soil.ratio, flexOver ? 9 : 0, tauV / tc, tauP / tauPall, Lavail > 0 ? Ld / Lavail : 9);
       return { L, Dmm, Wself, soil, qu, quCombo: gov, d, ov, Mov, Mspan, astB, astT, spB, spT, tauV, tauC: tc, Pu, b0, tauP, tauPall, Tb, Ld, Lavail, ratio, ok: ratio <= 1 + 1e-9, flexOver, legPed: cl, stackPed: cs, hp };
@@ -6154,9 +6228,10 @@ var Engine = (() => {
     const userL = R.L > 0 ? R.L : 0, userD = R.D > 0 ? R.D : 0;
     let res = null;
     const Lmin = Math.ceil((W + 2 * R.overhang) * 10) / 10;
-    const sizeD = (L) => { let last = null; for (let D = 400; D <= 2500; D += 50) { last = evalRaft(L, D); if (last.ok || last.soil.ratio > 1) { if (last.soil.ratio <= 1 && last.ok) return last; } } return last; };
+    // keep: the result may be returned (last width tried), so evaluate it fully
+    const sizeD = (L, keep) => { let last = null; for (let D = 400; D <= 2500; D += 50) { last = evalRaft(L, D, !(keep && D + 50 > 2500)); if (last.ok || last.soil.ratio > 1) { if (last.soil.ratio <= 1 && last.ok) return last; } } return last; };
     if (userL && userD) res = evalRaft(userL, userD);
-    else { for (let L = userL || Lmin; L <= (userL || Lmin + 12); L = Math.round((L + 0.1) * 10) / 10) { res = userD ? evalRaft(L, userD) : sizeD(L); if (res.ok) break; if (userL) break; } }
+    else { for (let L = userL || Lmin; L <= (userL || Lmin + 12); L = Math.round((L + 0.1) * 10) / 10) { const keep = !!userL || !(Math.round((L + 0.1) * 10) / 10 <= Lmin + 12); res = userD ? evalRaft(L, userD, !keep) : sizeD(L, keep); if (res.ok) break; if (userL) break; } }
     const specified = sbc > 0;
     const status = !res.ok ? (specified ? "CHECK" : "REVIEW") : specified ? "PASS" : "REVIEW";
     return { ...res, specified, sbc, fck, fy: fyr, cover, dBar, autoL: !userL, autoD: !userD, status, basis: "IS 456:2000 cl 20.1 / 20.2 (overturning, sliding: dead load restoring), soil pressure full contact or Meyerhof effective area; flexure Annex G with the two-way moment from the flat-slab analogy (column strip, cl 31.4.2.2 / 31.5.3.4), one-way shear Table 19, punching cl 31.6.3.1, anchor bond cl 26.2.1.1" };
@@ -6281,7 +6356,7 @@ var Engine = (() => {
 
   function towerModal(input, segments, loads, E_stack, refStackForces) {
     const tw = buildTower(input, segments, E_stack);
-    const fa = frameAnalyse({ nodes: tw.nodes, members: tw.members, supports: tw.supports });
+    const fa = frameAnalyse({ nodes: tw.nodes, members: tw.members, supports: tw.supports, twistLock: tw.twistLock });
     const { cases } = towerLoadCases(input, tw, loads, {}, 1);
     fa.run(cases.find((c3) => c3.id === "DL"));
     const Fdl = fa.results.get("DL").applied; const mass = new Map();
@@ -6302,7 +6377,7 @@ var Engine = (() => {
     // stack base envelope: the pinned base is the more flexible frame; its lower frequency governs gust and vortex checks
     if (towerConfig(input).stackBase === "envelope") {
       const inP = { ...input, support: { ...input.support, tower: { ...(input.support?.tower || {}), stackBase: "pinned" } } };
-      const twP = buildTower(inP, segments, E_stack); const faP = frameAnalyse({ nodes: twP.nodes, members: twP.members, supports: twP.supports });
+      const twP = buildTower(inP, segments, E_stack); const faP = frameAnalyse({ nodes: twP.nodes, members: twP.members, supports: twP.supports, twistLock: twP.twistLock });
       const casesP = towerLoadCases(inP, twP, loads, {}, 1).cases; faP.run(casesP.find((c3) => c3.id === "DL"));
       const FdP = faP.results.get("DL").applied; const massP = new Map(); faP.ids.forEach((id, k) => { const w = Math.abs(FdP[k * 6 + 1]); if (w) massP.set(id, w / 9.80665); });
       const msP = faP.modes(massP, 6), modeP = msP[0];
@@ -7267,6 +7342,7 @@ var Engine = (() => {
   // src/engine/solve.ts
   var worst = (a, b) => a === "CHECK" || b === "CHECK" ? "CHECK" : a === "REVIEW" || b === "REVIEW" ? "REVIEW" : "PASS";
   function solve(input0) {
+    progress("Stack model and wind", 0);
     // Structurally supported with the ladder on the tower (default): the stack carries no ladder; the cat ladder
     // runs outside one tower face from ground to the top platform and its weight and wind go to the tower legs.
     let input = (input0.support?.type === "structural" && towerLadderPosition({ ...defaultTower, ...(input0.support?.tower || {}) }) !== "stack")
@@ -7303,6 +7379,7 @@ var Engine = (() => {
     let towerRefDeflCm, towerCtx, towerModesAcross, towerVortexSets;
     if (structural) {
       // Structurally supported: the first frequency comes from the stack + tower frame model, not the free cantilever.
+      progress("Tower model and natural frequency", 0.1);
       const tm = towerModal(input, segments, preLoads, E_ACTIVE, lateralForces(input, zones, segments, segments.map(() => 101.9716), {}));
       frequency1 = { ...frequency1, f1: tm.frequency, period: tm.period };
       towerRefDeflCm = tm.refDeflectionCm; towerCtx = tm.ctx; towerModesAcross = tm.modesAcross; towerVortexSets = tm.vortexSets;
@@ -7311,6 +7388,7 @@ var Engine = (() => {
     if (guyed) {
       // Guyed stack: the first frequency comes from the stack + guys model at the erection tension. The erection tension follows the
       // static wind (cl 11.6), so a first pass is made on the 3 s gust forces before the gust factor and vortex checks.
+      progress("Guys: first analysis", 0.1);
       const pre = guyedAnalysis(input, segments, preLoads, { S: lateralForces(input, zones, segments, designPressures(input, segments, 1, "gust").map((p) => p.pd), {}), G: [], ka: 1 }, E_ACTIVE, null);
       frequency1 = { ...frequency1, f1: pre.modes[0].frequency, period: pre.modes[0].period };
       const rf = pre.refFa, refF = lateralForces(input, zones, segments, segments.map(() => 101.9716), {});
@@ -7373,6 +7451,7 @@ var Engine = (() => {
     let tower = null;
     if (structural) {
       // Stack wind fields come from the 3D frame (stack tied to the tower), worst of 8 wind directions.
+      progress("Tower analysis: wind directions and combinations", 0.25);
       tower = towerAnalysisEnvelope(input, segments, loads1, { S: staticComponents.map((c3) => c3.total), G: gefComponents.map((c3) => c3.total) }, ka, E_ACTIVE, towerCtx, (() => {
         const legacy = (input.seismic.codeEdition ?? "IS 1893:2002") === "IS 1893:1984";
         return { Z: input.seismic.zone === "Custom" ? input.seismic.customZ : ZONE_FACTORS[input.seismic.zone], I: input.assumptions.importanceFactorI, soil: input.seismic.soil, dampingFactor: dampingFactorPart4(input.seismic.dampingPct), legacy };
@@ -7386,6 +7465,7 @@ var Engine = (() => {
     let guyedRes = null;
     if (guyed) {
       // Stack wind fields come from the non-linear stack + guys model: worst wind direction, cold and hot
+      progress("Guyed analysis", 0.25);
       guyedRes = guyedAnalysis(input, segments, loads1, { S: staticComponents.map((c3) => c3.total), G: gefComponents.map((c3) => c3.total), ka }, E_ACTIVE, (() => {
         const legacy = (input.seismic.codeEdition ?? "IS 1893:2002") === "IS 1893:1984";
         return { Z: input.seismic.zone === "Custom" ? input.seismic.customZ : ZONE_FACTORS[input.seismic.zone], I: input.assumptions.importanceFactorI, soil: input.seismic.soil, dampingFactor: dampingFactorPart4(input.seismic.dampingPct), legacy };
@@ -7397,6 +7477,7 @@ var Engine = (() => {
       topDeflectionCm = guyedRes.topDeflectionCm;
       delete guyedRes.refFa;
     }
+    progress("Seismic", 0.55);
     const seismic1 = seismicLoads(input, segments, nodes1, grandTotal1, frequency1.period, frequency1.cgHeight);
     const nSegAll = segments.length;
     const axialDL1 = [];
@@ -7536,6 +7617,7 @@ var Engine = (() => {
     // against uplift: Wdead keeps the stack's own minimum weight.
     const guyBaseV = guyedRes ? (guyedRes.guyAxial[nSeg - 1] ?? 0) * (designIsLS ? 1.5 : 1) : 0;
     const basePerCombination = (guyBaseV ? baseLoadSets.map((st) => ({ ...st, Wdead: Math.min(st.Wdead ?? st.W, st.W), W: st.W + guyBaseV })) : baseLoadSets).map((st) => {
+      progress("Base and anchor bolts", 0.65);
       const b = baseDesign(input, zones, st.W, st.V, st.M, st.Wdead);
       return { set: st, b, ratio: baseRatio(b) };
     });
@@ -7562,6 +7644,7 @@ var Engine = (() => {
     const footing = padFooting;
     // structurally supported: leg base plates, raft under the tower and stack, bolted joints, tie collars (step 3)
     let towerDesign = null;
+    progress("Tower base plates, joints, collars and raft", 0.72);
     if (tower) {
       towerDesign = {
         legPlates: towerLegPlates(input, tower.config, tower),
@@ -7574,9 +7657,11 @@ var Engine = (() => {
         raft: towerRaftDesign(input, tower.config, tower, base.geometry.basePlateOd, base.embedmentProvided)
       };
     }
+    progress("Flanges", 0.86);
     const flanges = flangeDesign(input, zones, loads, fields);
     // fatigue under vortex-induced oscillation (IS 800:2007 cl 13.6(a)(3))
     let fatigue;
+    progress("Fatigue under vortex shedding", 0.9);
     try { fatigue = vortexFatigue(input, { segments, zones, across, flanges, base, structural, nodes, femModes, vortexSets: towerVortexSets, tower, minDeadWeight: grandTotalMin }); }
     catch (e) { fatigue = { on: true, status: "CHECK", rows: [], modes: [], error: String(e && e.message || e) }; }
     // guyed: the fatigue routine works on the free cantilever or the tower frame; it is not applied to a guyed stack in this version
@@ -7758,9 +7843,15 @@ var Engine = (() => {
   var MKS = units("MKS");
 
   // src/engine/version.ts
-  var ENGINE_VERSION = "4.11.0";
+  var ENGINE_VERSION = "4.15.0";
   var ENGINE_DATE = "2026-11-10";
   var ENGINE_CHANGELOG = [
+    { version: "4.15.0", change: "Background calculation: Run analysis runs in a separate worker, so the screen stays usable (scroll, change tabs, read the inputs) while a progress panel shows the run, the stage (tower model, tower analysis, seismic, base, raft, flanges, fatigue) and the elapsed time, with Cancel (or Esc). Editing during a run keeps the results marked out of date; reports wait until the run ends. Where a worker cannot start, the analysis runs as before. No calculation change: the background result is identical to the same calculation run on the screen thread, including the STAAD file." },
+    { version: "4.14.0", change: "Guided steps: the tabs are numbered steps with a status dot (hollow not done, green done, amber warnings, red errors) and a Back / Next bar with a short note; checks appear for the steps that are done, each failure links to the step that fixes it and names the automatic sizing tool there. Changing the height of a structure supported stack refits the tower (extends it as well as shortening it; member sizes are left for the user) and a guyed stack refits guy levels that end up above the top. Speed: the raft sizing skips the bending grid for trial sizes that already fail on punching or bolt bond; a 50 m tower design calculates about 10 times faster. No calculation change (every result identical to 4.13.0 on all saved jobs and a new 50 m design)." },
+    { version: "4.13.0", change: "Run analysis, as in STAAD: on structure supported and guyed designs an edit no longer recalculates the whole tower straight away. The change is kept, the results, tables and 3D are greyed and marked out of date (yellow bar, status bar), and Word, print, STAAD and GA outputs are blocked until the analysis is run (Run analysis button, F5, or Analyze > Run analysis in the desktop program). Switching to structure supported is now instant. \"Calculate after every change\" brings back the old behaviour. Self-supported designs still update live. No calculation change." },
+    { version: "4.12.1", change: "Fix: a structure supported stack with a pinned stack base could stop calculating (\"Tower model is unstable\") after the height or diameter was changed. With a pinned base nothing held the stack against twisting about its own axis; the twist carries no load and is now held at the base in the analysis only (the support stays PINNED in the report and the STAAD file). Saved jobs give the same results (differences only in the 6th significant figure or in values that are effectively zero). Screen: when values cannot be calculated, a red notice now says so, offers to go back to the last values that worked, and blocks the Word and printed report; before, the screen silently kept the previous results." },
+    { version: "4.12.0", change: "Desktop program: start screen (new design by type, open, recent designs) and a New design window where the user names the design, enters job details and chooses the folder to save it in. Web page: the desktop connector can start a new design with project details or as a copy of a saved one. No calculation change." },
+    { version: "4.11.1", change: "Speed: structure supported jobs recalculate faster (about 2 times on Chakan) after every change, including switching the support type. The raft sizing no longer works out the bending grid for trial sizes that already fail on soil pressure, overturning or sliding (they can never be chosen), and the base-parts weight iteration reuses its first run instead of repeating it. Every result is identical to 4.11.0 (checked on all saved jobs)." },
     { version: "4.11.0", change: "Structure supported stacks: tap any tower member in the 3D model to identify it. The member turns yellow and a card shows its number, type, section, position (leg or face), level, joints, length, slenderness, largest tension and compression, governing case and stress ratio. The numbers are the same as report Appendix A." },
     { version: "4.10.0", change: "Word report: a new button beside Print report downloads the report as an editable Word file (.docx) with the same sections, tables, figures, landscape pages for wide tables, page header and page numbers. The numbers are read from the report; nothing is recalculated." },
     { version: "4.9.1", change: "The Fabrication tab is removed from all support types (self-supported, tied, structure supported, three-leg, guyed). The analysis, results and printed report are unchanged." },
@@ -11423,6 +11514,10 @@ ${fmt(e.pos.y)}\r
       note: !converged ? "Did not settle \u2014 check the joint moment rather than the plate." : boltsGovern ? "Plate thicknesses converged, but one or more joints are limited by BOLT stress, which thickness cannot fix." : opt.snapToCommercial ? "Converged and snapped to stocked plate sizes. Every joint meets the cl.7.3.4 6 mm minimum." : `Converged on ${opt.increment} mm steps.`
     };
   }
+  /* Progress reporting for the background calculation (desktop and web): solve() names each stage as it starts.
+     Reporting only; nothing here changes a result. */
+  let progressHook = null;
+  function progress(stage, frac) { if (progressHook) { try { progressHook(stage, frac); } catch (e) { /* never let reporting stop a calculation */ } } }
   function resolveBasePartsWeight(input, tolerance = 0.5, maxIterations = 25) {
     const before = solve(input);
     const trace = [];
@@ -11436,7 +11531,8 @@ ${fmt(e.pos.y)}\r
         ...input,
         assumptions: { ...input.assumptions, assumedBasePartsKg: assumed }
       };
-      last = solve(trial);
+      // the first trial is the input itself (same assumed weight), already solved as "before"
+      last = iterations === 1 && assumed === input.assumptions.assumedBasePartsKg ? before : solve(trial);
       const computed = last.base.computedWeight;
       trace.push(Number(computed.toFixed(2)));
       if (Math.abs(computed - assumed) <= tolerance) {
@@ -12197,6 +12293,7 @@ var COURSE_GAP = 0.38;
     return Engine.solve(input);
   }
   var result = solve(STATE.input);
+  STATE.resultSig = JSON.stringify(STATE.input); STATE.stale = false;
 
   var $ = function (s) { return document.querySelector(s); };
 
@@ -12267,14 +12364,31 @@ var COURSE_GAP = 0.38;
     if (((STATE.input.design && STATE.input.design.method) || 'WS') !== prevMethod) {
       STATE.suggestion = null; STATE.flangeSuggestion = null; STATE.chairSuggestion = null; STATE.boltSuggestion = null; STATE.towerSuggestion = null; STATE.guySuggestion = null;
     }
+    // Tower and guyed designs: like STAAD, the analysis runs when the user asks (Run analysis, F5), not on every
+    // edit. The change is kept and the results are marked out of date until the next run (see showStale).
+    if (manualRun(STATE.input)) {
+      STATE.history.push(prev);
+      if (STATE.history.length > 25) STATE.history.shift();
+      STATE.stale = JSON.stringify(STATE.input) !== STATE.resultSig;
+      render();
+      showCalcError(); showStale();
+      return;
+    }
     try {
       result = solve(STATE.input);
+      adopt();
       STATE.history.push(prev);
       if (STATE.history.length > 25) STATE.history.shift();
     } catch (e) {
+      // The new values cannot be calculated. Say so on screen: everything shown is still the previous result,
+      // so the inputs and the results no longer match until the value is corrected or the change is undone.
       console.warn('Design not solvable with these values yet:', e);
+      STATE.calcError = { message: String((e && e.message) || e), goodInput: STATE.calcError ? STATE.calcError.goodInput : prev };
+      STATE.history.push(prev);
+      if (STATE.history.length > 25) STATE.history.shift();
     }
     render();
+    showCalcError(); showStale();
     if (!REDUCED && scene && modelGroup && canMorph(before, result)) morphModel(before, result);
     else rebuildModel();
   }
@@ -12288,12 +12402,379 @@ var COURSE_GAP = 0.38;
     setTimeout(function () { button.textContent = was; button.classList.remove('saved'); }, 1600);
   }
 
+  /* ── Guided steps ───────────────────────────────────────────────────────
+     The tabs are taken in order, like the page control in STAAD. A step counts as done when the user moves on
+     with Next (an opened design has every step done). Its dot then shows the checks that belong to it:
+     green no problems, amber warnings, red errors. Steps not reached yet show no result. */
+  function guidedOn() { return lsGet('ss-guided') !== '0'; }
+  STATE.stepsDone = STATE.stepsDone || {};
+  var STEP_AREAS = {
+    project: ['Design method'],
+    geometry: ['Geometry'],
+    tower: ['Supporting structure'],
+    guys: ['Guys'],
+    platforms: ['Platforms'],
+    zones: ['Shell zones', 'Shell', 'Shell fabrication zones', 'Stability'],
+    loads: ['Unit weights & allowances'],
+    wind: ['Wind', 'Fatigue'],
+    seismic: ['Seismic'],
+    materials: ['Materials'],
+    base: ['Base design', '10 · Base design'],
+    footing: ['Footing', '10b · Concrete footing', 'Foundation'],
+    flanges: ['Flanges', 'Shell flange joints'],
+    combos: ['Assumptions']
+  };
+  var STEP_NOTES = {
+    project: 'Job details for the report cover, the design method (working stress, IS 800:1984, or limit state, IS 800:2007) and how the stack is supported.',
+    geometry: 'Height, diameter and base level of the stack, and the ladder and staircase levels. These set the size of everything that follows.',
+    tower: 'The lattice tower that carries the stack: levels, tie levels, member sections and bracing. Members, joints and base plates are checked to IS 800.',
+    guys: 'The wire-rope guys: levels, anchor radius, rope size and pretension.',
+    platforms: 'Platform levels, type and loads.',
+    zones: 'Shell plate zones and thicknesses. The thickness floor follows IS 6533 (Part 2) cl 7.3.1; the shell is checked for stress and stability.',
+    loads: 'Unit weights and allowances: platforms, ladders, lining, insulation and the miscellaneous allowance, and the damping used for dynamics.',
+    wind: 'Wind on the stack (IS 875 Part 3), across-wind (vortex) checks and fatigue.',
+    seismic: 'Earthquake loads (IS 1893).',
+    materials: 'Steel grades and properties for the shell, flanges and base.',
+    base: 'Base plate, chair, gussets and anchor bolts.',
+    footing: 'The concrete footing: size, depth, soil bearing, overturning and sliding.',
+    flanges: 'Shell flange joints: flange rings and bolts.',
+    combos: 'Load combinations and the analysis assumptions.',
+    results: 'All checks together. The report and drawings use these results.',
+    report: 'The design calculation report: print it, or export it to Word.'
+  };
+  var STEP_TOOLS = { zones: 'shell thickness', base: 'base chair and anchor bolts', flanges: 'flange joints', tower: 'tower members', guys: 'guys' };
+  function stepOfWhere(where) {
+    for (var sid in STEP_AREAS) if (STEP_AREAS[sid].indexOf(where) >= 0) {
+      if (sid === 'tower' && !(STATE.input.support && STATE.input.support.type === 'structural')) return null;
+      if (sid === 'guys' && !(STATE.input.support && STATE.input.support.type === 'guyed')) return null;
+      return sid;
+    }
+    return null;
+  }
+  var STEP_STATUS_TEXT = { done: 'Done, no problems', warn: 'Done, with warnings', error: 'Done, needs attention: checks fail', todo: 'Not done yet' };
+  var findingsCache = { r: null, list: [] };
+  function findings() {
+    if (findingsCache.r !== result) { var l = []; try { l = Engine.validate(result) || []; } catch (e) {} findingsCache = { r: result, list: l }; }
+    return findingsCache.list;
+  }
+  function stepTabs() {
+    return TABS.filter(function (tb) {
+      if (tb.id === 'view3d') return false;
+      if (tb.structuralOnly && !(STATE.input.support && STATE.input.support.type === 'structural')) return false;
+      if (tb.guyedOnly && !(STATE.input.support && STATE.input.support.type === 'guyed')) return false;
+      return true;
+    });
+  }
+  function stepInfo(id) {
+    var list = stepTabs(), k = -1;
+    for (var j = 0; j < list.length; j++) if (list[j].id === id) k = j;
+    if (k < 0) return null;
+    var status = null, areas = STEP_AREAS[id];
+    if (areas && STATE.stepsDone[id]) {
+      var mine = findings().filter(function (x) { return areas.indexOf(x.where) >= 0; });
+      status = mine.some(function (x) { return x.severity === 'error'; }) ? 'error' : mine.some(function (x) { return x.severity === 'warning'; }) ? 'warn' : 'done';
+    } else if (areas) status = 'todo';
+    return { n: k + 1, of: list.length, k: k, list: list, status: status };
+  }
+  function renderGuide() {
+    var old = document.getElementById('guide-bar'); if (old) old.remove();
+    var st = document.getElementById('wbstatus');
+    if (st && !st.querySelector('.s-guided')) {
+      var sp = document.createElement('span'); sp.className = 's-guided'; sp.style.cursor = 'pointer';
+      sp.textContent = guidedOn() ? 'Guided steps: on' : 'Guided steps: off';
+      sp.title = 'Show or hide the step numbers and the Back / Next bar';
+      sp.onclick = function () { lsSet('ss-guided', guidedOn() ? '0' : '1'); render(); showStale(); };
+      st.insertBefore(sp, st.children[1] || null);
+    }
+    if (!guidedOn()) return;
+    var t = currentTab(), info = stepInfo(t.id);
+    var host = document.getElementById('inputs');
+    if (!info || !host || host.hidden || (STATE.search && STATE.search.trim())) return;
+    var bar = el('div', 'guide-bar'); bar.id = 'guide-bar';
+    var prev = info.list[info.k - 1], next = info.list[info.k + 1];
+    bar.innerHTML = '<div class="gb-h">Step ' + info.n + ' of ' + info.of + ' \u00B7 ' + t.label + '</div>' +
+      '<div class="gb-n">' + (STEP_NOTES[t.id] || '') + '</div>';
+    var row = el('div', 'gb-row');
+    if (prev) { var bp = el('button', 'pill', '\u25C2 Back'); bp.onclick = function () { selectTab(prev.id); }; row.appendChild(bp); }
+    if (next) {
+      var bn = el('button', 'pill gb-next', 'Next: ' + next.label + ' \u25B8');
+      bn.onclick = function () {
+        STATE.stepsDone[t.id] = true;
+        selectTab(next.id);
+        if (next.id === 'results' && (STATE.stale || STATE.calcError) && window.__ssRun) window.__ssRun();
+      };
+      row.appendChild(bn);
+    }
+    bar.appendChild(row);
+    host.insertBefore(bar, host.firstChild);
+  }
+  (function () {
+    var css = document.createElement('style');
+    css.textContent = '.app.classic .wbtab { position: relative; }' +
+      '.wbtab .stp { position: absolute; left: 4px; top: 3px; font: 600 9px/1 var(--mono, monospace); color: #6b6b6b; }' +
+      '.wbtab .sd { position: absolute; right: 5px; top: 5px; width: 8px; height: 8px; border-radius: 50%; }' +
+      '.wbtab .sd-todo { border: 1.5px solid #9a9a9a; box-sizing: border-box; }' +
+      '.wbtab .sd-done { background: #2f9e6e; }' +
+      '.wbtab .sd-warn { background: #d99a1c; }' +
+      '.wbtab .sd-error { background: #c53a3a; }' +
+      '.guide-bar { margin: 8px 8px 4px; padding: 10px 12px; border: 1px solid #b9c9dc; background: #eef4fb; border-radius: 4px; font-family: var(--display, Arial, sans-serif); }' +
+      '.finding .goto { margin-top: 5px; font-size: 12px; } .finding .goto a { color: #1769aa; font-weight: 600; text-decoration: none; } .finding .goto a:hover { text-decoration: underline; }' +
+      '.guide-bar .gb-h { font-weight: 700; font-size: 13px; color: #0a246a; margin-bottom: 3px; }' +
+      '.guide-bar .gb-n { font-size: 12px; color: #33475b; line-height: 1.4; }' +
+      '.guide-bar .gb-row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }' +
+      '.guide-bar .pill { cursor: pointer; background: #fff; color: #142233; }' +
+      '.guide-bar .gb-next { background: #1769aa !important; color: #fff !important; border-color: #1769aa !important; }' +
+      '@media print { .guide-bar { display: none !important; } }';
+    document.head.appendChild(css);
+  })();
+
+  /* ── Run analysis (tower and guyed designs) ───────────────────────────
+     result always belongs to STATE.resultSig (the inputs it was calculated from). When the inputs differ, the
+     screen says the results are out of date and the reports are blocked until the analysis is run again. */
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  function manualRun(inp) { return isStructUI(inp) && lsGet('ss-autorun') !== '1'; }
+  // the current result now belongs to the current inputs
+  function adopt() { STATE.resultSig = JSON.stringify(STATE.input); STATE.stale = false; STATE.calcError = null; }
+  /* Background calculation. The analysis runs in a Web Worker built from this page's own engine script, so the
+     screen stays usable, a progress panel shows the stage, and Cancel stops it. The worker runs exactly what
+     solve() above runs (base-parts weight iteration, then the converged run) on a copy of the inputs and sends the
+     result back as plain data; the three helper functions a tower result carries are rebuilt here (the STAAD text is
+     prepared in the worker). If a worker cannot be started, the analysis runs here as before. */
+  var CALC = { worker: null, busy: false, id: 0, sig: null, input: null, noWorker: false, t0: 0 };
+  var WORKER_GLUE = [
+    'var lastStage = null, run = 0, id = 0;',
+    'Engine.setProgress(function (stage, frac) {',
+    '  if (frac === 0) run++;',
+    '  var key = run + "|" + stage; if (key === lastStage) return; lastStage = key;',
+    '  postMessage({ type: "progress", id: id, run: run, stage: stage, frac: frac });',
+    '});',
+    'onmessage = function (ev) {',
+    '  var m = ev.data; if (!m || m.type !== "solve") return;',
+    '  id = m.id; run = 0; lastStage = null;',
+    '  try {',
+    '    var input = m.input, resolution = Engine.resolveBasePartsWeight(input), r;',
+    '    if (resolution.converged) r = Engine.solve(Object.assign({}, input, { assumptions: Object.assign({}, input.assumptions, { assumedBasePartsKg: resolution.resolved }) }));',
+    '    else r = Engine.solve(input);',
+    '    var staad = null, staadError = null;',
+    '    if (r.tower && typeof r.tower.staadFile === "function") { try { staad = r.tower.staadFile(); } catch (e) { staadError = String(e && e.message || e); } }',
+    '    var ms = r.tower && r.tower.modes;',
+    '    if (ms && typeof ms.dofOf === "function") {',
+    '      var n = ms.Md ? ms.Md.length : 0, dof = new Int8Array(n), node = new Array(n);',
+    '      for (var a = 0; a < n; a++) { dof[a] = ms.dofOf(a); node[a] = ms.nodeOf(a); }',
+    '      delete ms.dofOf; delete ms.nodeOf; ms.__dof = dof; ms.__node = node;',
+    '    }',
+    '    postMessage({ type: "done", id: id, result: r, resolution: resolution, staad: staad, staadError: staadError });',
+    '  } catch (e) { postMessage({ type: "error", id: id, message: String(e && e.message || e) }); }',
+    '};'
+  ].join("\n");
+  function calcWorker() {
+    if (CALC.worker || CALC.noWorker) return CALC.worker;
+    try {
+      var src = Array.prototype.find.call(document.scripts, function (sc) { return /^\s*"use strict";\s*var Engine = /.test(sc.textContent); });
+      if (!src || typeof Worker === 'undefined') throw new Error('no worker support');
+      var url = URL.createObjectURL(new Blob([src.textContent, '\n;\n', WORKER_GLUE], { type: 'text/javascript' }));
+      CALC.worker = new Worker(url);
+      CALC.worker.onmessage = onCalcMessage;
+      CALC.worker.onerror = function (e) { e.preventDefault && e.preventDefault(); calcFailed('The background calculation stopped: ' + (e.message || 'unknown error')); };
+    } catch (e) { CALC.noWorker = true; CALC.worker = null; }
+    return CALC.worker;
+  }
+  // the tower result's helper functions, rebuilt from the plain data the worker sends
+  function reviveResult(r, msg) {
+    if (r && r.tower) {
+      var ms = r.tower.modes;
+      if (ms && ms.__dof) { var dof = ms.__dof, node = ms.__node; ms.dofOf = function (a) { return dof[a]; }; ms.nodeOf = function (a) { return node[a]; }; }
+      if (msg.staad != null || msg.staadError) {
+        var txt = msg.staad, err = msg.staadError;
+        Object.defineProperty(r.tower, 'staadFile', { enumerable: false, configurable: true, value: function () { if (err) throw new Error(err); return txt; } });
+      }
+    }
+    return r;
+  }
+  function onCalcMessage(ev) {
+    var m = ev.data; if (!m || m.id !== CALC.id) return;
+    if (m.type === 'progress') { showProgress(m); return; }
+    CALC.busy = false; showProgress(null);
+    var sentSig = CALC.sig, sentInput = CALC.input;
+    if (m.type === 'done') {
+      result = reviveResult(m.result, m);
+      STATE.basePartsResolution = m.resolution;
+      STATE.resultSig = sentSig; STATE.calcError = null;
+      STATE.stale = JSON.stringify(STATE.input) !== sentSig;   // edited while it ran: still out of date
+    } else {
+      STATE.stale = false;
+      STATE.calcError = { message: m.message, goodInput: STATE.resultSig ? JSON.parse(STATE.resultSig) : sentInput };
+    }
+    render(); rebuildModel(); showCalcError(); showStale();
+  }
+  function calcFailed(msg) {
+    if (CALC.worker) { try { CALC.worker.terminate(); } catch (e) {} CALC.worker = null; }
+    CALC.busy = false; showProgress(null);
+    STATE.calcError = { message: msg, goodInput: STATE.resultSig ? JSON.parse(STATE.resultSig) : STATE.input };
+    render(); showCalcError(); showStale();
+  }
+  function cancelAnalysis() {
+    if (!CALC.busy) return;
+    if (CALC.worker) { try { CALC.worker.terminate(); } catch (e) {} CALC.worker = null; }
+    CALC.busy = false; CALC.id++; showProgress(null);
+    STATE.stale = JSON.stringify(STATE.input) !== STATE.resultSig;
+    render(); showCalcError(); showStale();
+  }
+  window.__ssCancel = cancelAnalysis;
+  function runAnalysis() {
+    if (!STATE.stale && !STATE.calcError) return;
+    var sig = JSON.stringify(STATE.input);
+    if (CALC.busy) { if (sig === CALC.sig) return; cancelAnalysis(); }   // inputs changed since this run started: restart
+    var w = calcWorker();
+    if (!w) return runAnalysisHere();
+    CALC.busy = true; CALC.id++; CALC.sig = sig; CALC.input = JSON.parse(sig); CALC.t0 = Date.now();
+    showProgress({ run: 1, stage: 'Starting', frac: 0 });
+    w.postMessage({ type: 'solve', id: CALC.id, input: CALC.input });
+  }
+  // fallback: the same calculation on this thread (the screen waits)
+  function runAnalysisHere() {
+    var good = STATE.calcError ? STATE.calcError.goodInput : JSON.parse(STATE.resultSig || 'null');
+    setBusyNote('Running the analysis' + (STATE.input.support && STATE.input.support.type === 'guyed' ? ' (guys)...' : ' (tower)...'));
+    requestAnimationFrame(function () {
+      setTimeout(function () {
+        try { result = solve(STATE.input); adopt(); }
+        catch (e) { STATE.stale = false; STATE.calcError = { message: String((e && e.message) || e), goodInput: good || STATE.input }; }
+        setBusyNote(null);
+        render(); rebuildModel(); showCalcError(); showStale();
+      }, 30);
+    });
+  }
+  /* Progress panel (bottom right). The bar counts analysis runs (the base-parts weight iteration usually needs
+     about three) and the stage within the run; it is an estimate, the stage names are exact. */
+  function showProgress(m) {
+    var p = document.getElementById('calc-progress');
+    if (!m) { if (p) p.remove(); return; }
+    if (!p) {
+      p = document.createElement('div'); p.id = 'calc-progress'; p.setAttribute('role', 'status');
+      p.style.cssText = 'position:fixed;right:18px;bottom:34px;z-index:8600;width:320px;background:var(--ink,#fff);color:var(--fg,#142233);' +
+        'border:1px solid #b9c9dc;border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.2);padding:12px 14px;font:13px/1.35 var(--display,Arial,sans-serif)';
+      p.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:baseline"><b>Running the analysis</b><span id="cp-time" style="font:11px var(--mono,monospace);color:#6b7c8f"></span></div>' +
+        '<div id="cp-stage" style="font-size:12px;color:#33475b;margin:6px 0 8px;min-height:16px"></div>' +
+        '<div style="height:8px;background:#e3eaf2;border-radius:4px;overflow:hidden"><div id="cp-bar" style="height:100%;width:0;background:#1769aa;transition:width .3s"></div></div>' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:9px"><span style="font-size:11px;color:#6b7c8f">You can keep working while it runs.</span>' +
+        '<button id="cp-cancel" style="cursor:pointer;background:#fff;border:1px solid #c7d3e0;border-radius:4px;padding:4px 10px;font:12px var(--display,Arial,sans-serif)">Cancel</button></div>';
+      document.body.appendChild(p);
+      p.querySelector('#cp-cancel').onclick = cancelAnalysis;
+      clearInterval(CALC.timer);
+      CALC.timer = setInterval(function () { var t = document.getElementById('cp-time'); if (!t) { clearInterval(CALC.timer); return; } t.textContent = Math.round((Date.now() - CALC.t0) / 1000) + ' s'; }, 500);
+    }
+    var runs = Math.max(3, m.run || 1), done = ((m.run || 1) - 1 + (m.frac || 0)) / runs;
+    p.querySelector('#cp-stage').textContent = 'Run ' + (m.run || 1) + ' \u00B7 ' + m.stage;
+    p.querySelector('#cp-bar').style.width = Math.max(3, Math.min(97, Math.round(done * 100))) + '%';
+  }
+  window.__ssRun = runAnalysis;
+  function setBusyNote(text) {
+    var o = document.getElementById('run-busy');
+    if (!text) { if (o) o.remove(); return; }
+    if (!o) {
+      o = document.createElement('div'); o.id = 'run-busy';
+      o.style.cssText = 'position:fixed;inset:0;z-index:8500;background:rgba(10,20,32,.35);display:flex;align-items:center;justify-content:center';
+      o.innerHTML = '<div style="background:var(--ink,#fff);color:var(--fg,#142233);border-radius:8px;padding:16px 22px;font:14px var(--display,Arial,sans-serif);box-shadow:0 10px 40px rgba(0,0,0,.25)"></div>';
+      document.body.appendChild(o);
+    }
+    o.firstChild.textContent = text;
+  }
+  /* Yellow bar and greyed results while the results are out of date. */
+  function showStale() {
+    var on = !!STATE.stale && !STATE.calcError;
+    document.body.classList.toggle('ss-stale', on);
+    var runBtn = document.getElementById('f-run');
+    if (runBtn) {
+      runBtn.hidden = !isStructUI(STATE.input) && !STATE.stale;
+      runBtn.classList.toggle('ss-run-due', on);
+      runBtn.title = on ? 'Inputs changed since the last analysis. Run it again (F5).' : 'Run the analysis (F5)';
+    }
+    var st = document.getElementById('wbstatus');
+    if (st && on && !st.querySelector('.s-stale')) { var sp = document.createElement('span'); sp.className = 's-stale'; sp.textContent = 'RESULTS OUT OF DATE'; st.appendChild(sp); }
+    var bar = document.getElementById('stale-bar');
+    if (!on) { if (bar) bar.remove(); return; }
+    if (!bar) {
+      bar = document.createElement('div'); bar.id = 'stale-bar'; bar.setAttribute('role', 'status');
+      bar.style.cssText = 'position:fixed;left:50%;top:44px;transform:translateX(-50%);z-index:7900;max-width:min(860px,92vw);' +
+        'background:#fff4d6;color:#5a3d00;border:1px solid #e8b84a;border-radius:6px;padding:8px 12px;box-shadow:0 6px 20px rgba(0,0,0,.15);' +
+        'font:13px/1.4 var(--display,Arial,sans-serif);display:flex;gap:12px;align-items:center';
+      bar.innerHTML = '<div><b>Inputs changed.</b> The results, checks and 3D are for the previous values until you run the analysis. Reports are blocked until then.</div>';
+      var b = document.createElement('button');
+      b.textContent = 'Run analysis (F5)';
+      b.style.cssText = 'flex:none;cursor:pointer;background:#1769aa;color:#fff;border:0;border-radius:4px;padding:7px 12px;font:600 12px var(--display,Arial,sans-serif)';
+      b.onclick = runAnalysis;
+      var lab = document.createElement('label');
+      lab.style.cssText = 'flex:none;font-size:11.5px;display:flex;gap:4px;align-items:center;cursor:pointer';
+      lab.innerHTML = '<input type="checkbox" style="margin:0">Calculate after every change';
+      lab.firstChild.onchange = function () { lsSet('ss-autorun', this.checked ? '1' : '0'); if (this.checked) runAnalysis(); };
+      bar.appendChild(b); bar.appendChild(lab);
+      document.body.appendChild(bar);
+    }
+  }
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'F5') { e.preventDefault(); if (STATE.stale || STATE.calcError) runAnalysis(); }
+    if (e.key === 'Escape' && CALC.busy) cancelAnalysis();
+  });
+  (function () {
+    var css = document.createElement('style');
+    css.textContent = 'body.ss-stale #results, body.ss-stale #reportpane, body.ss-stale #sheets, body.ss-stale #stage canvas { opacity: .45; filter: grayscale(.6); transition: opacity .2s; }' +
+      '#f-run.ss-run-due { background: #1769aa !important; color: #fff !important; }' +
+      '#wbstatus .s-stale { background: #e8b84a; color: #3d2a00; font-weight: 600; padding: 0 8px; }' +
+      '@media print { #stale-bar, #calc-error, #run-busy { display: none !important; } }';
+    document.head.appendChild(css);
+  })();
+
+  /* Red bar across the screen while the inputs cannot be calculated (see recompute). */
+  function showCalcError() {
+    var bar = document.getElementById('calc-error');
+    if (!STATE.calcError) { if (bar) bar.remove(); return; }
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'calc-error';
+      bar.setAttribute('role', 'alert');
+      bar.style.cssText = 'position:fixed;left:50%;top:44px;transform:translateX(-50%);z-index:8000;max-width:min(900px,92vw);' +
+        'background:#b3261e;color:#fff;border-radius:6px;padding:10px 14px;box-shadow:0 6px 24px rgba(0,0,0,.25);' +
+        'font:13px/1.4 var(--display,Arial,sans-serif);display:flex;gap:14px;align-items:center';
+      document.body.appendChild(bar);
+    }
+    bar.innerHTML = '';
+    var txt = document.createElement('div');
+    txt.innerHTML = '<b>These values cannot be calculated.</b> The results, checks and 3D on screen are still for the previous values, ' +
+      'so they do not match the inputs. Correct the value or go back. Reports are blocked until then.' +
+      '<div style="opacity:.85;font-size:12px;margin-top:3px">Reason: ' + escH(STATE.calcError.message) + '</div>';
+    var back = document.createElement('button');
+    back.textContent = 'Go back to the last values that worked';
+    back.style.cssText = 'flex:none;cursor:pointer;background:#fff;color:#b3261e;border:0;border-radius:4px;padding:7px 10px;font:600 12px var(--display,Arial,sans-serif)';
+    back.onclick = function () {
+      STATE.input = JSON.parse(JSON.stringify(STATE.calcError.goodInput));
+      STATE.calcError = null;
+      result = solve(STATE.input); adopt(); render(); rebuildModel(); showCalcError(); showStale();
+    };
+    bar.appendChild(txt); bar.appendChild(back);
+  }
+  function calcBlocked() {
+    if (CALC.busy) { alert('The analysis is still running. Wait for it to finish, then try again.'); return true; }
+    if (STATE.stale && !STATE.calcError) {
+      alert('The results are out of date: the inputs changed after the last analysis.\n\nPress Run analysis (F5) first, so the report and files match the inputs.');
+      return true;
+    }
+    if (!STATE.calcError) return false;
+    alert('The current values cannot be calculated, so the report would not match the inputs.\n\nReason: ' + STATE.calcError.message + '\n\nCorrect the value, or use "Go back to the last values that worked", then try again.');
+    return true;
+  }
+  window.__ssPrint = function () { if (!calcBlocked()) window.print(); };
+
   function loadOutcome(outcome, source) {
     STATE.input = outcome.input;
     STATE.designName = outcome.name;
     var dnEl = $('#design-name'); if (dnEl) dnEl.value = outcome.name;
     STATE.history = [];
     result = solve(STATE.input);
+    adopt(); showCalcError(); showStale();
+    // an opened or copied design is complete, so every step counts as done; a new design starts at step 1
+    STATE.stepsDone = {};
+    if (source !== 'new') TABS.forEach(function (tb) { STATE.stepsDone[tb.id] = true; });
     render();
     rebuildModel();
     if (outcome.notes.length) {
@@ -13078,7 +13559,17 @@ var COURSE_GAP = 0.38;
     }
 
     if ((b = addGroup('geometry', '2 · Geometry'))) {
-      N(b, 'Total height H', 'geometry.totalHeight', 'm', 0.5, { also: clearZones });
+      N(b, 'Total height H', 'geometry.totalHeight', 'm', 0.5, { also: function (d) {
+        clearZones(d);
+        // the tower or the guys follow the new height (the notes say what moved)
+        if (d.support && d.support.type === 'structural') { Engine.fitTowerToStack(d); STATE.fitMoves = d.fitMoves; delete d.fitMoves; }
+        if (d.support && d.support.type === 'guyed' && d.support.guyed && (d.support.guyed.levels || []).some(function (lv) { return lv.el > d.geometry.totalHeight - 1e-9; })) {
+          var g0 = Engine.guyedConfig(Object.assign({}, d, { support: Object.assign({}, d.support, { guyed: Object.assign({}, d.support.guyed, { levels: [] }) }) }));
+          d.support.guyed.levels = g0.levels.map(function (x) { return { el: x.el, radius: x.radius, dia: x.dia }; });
+          STATE.fitMoves = ['Guy levels refitted to the new height: ' + d.support.guyed.levels.map(function (x) { return x.el; }).join(', ') + ' m.'];
+        }
+      } });
+      if (STATE.fitMoves && STATE.fitMoves.length && i.support && i.support.type !== 'self') b.appendChild(el('p', 'hint', 'Fitted to the stack: ' + STATE.fitMoves.join(' ')));
       N(b, 'Base above ground', 'geometry.baseElevation', 'm', 0.1);
       N(b, 'Shell top ID', 'geometry.topId', 'mm', 25, { also: clearZones });
       var structU = i.support && i.support.type === 'structural' && (!i.support.tower || i.support.tower.uniformDiameter !== false);
@@ -13169,6 +13660,7 @@ var COURSE_GAP = 0.38;
         var mk = function (label, base) {
           var bt = el('button', 'pill', label); bt.style.cssText = 'cursor:pointer;background:none;color:var(--blue-glow);margin:2px 8px 8px 0';
           bt.onclick = function () {
+            if (calcBlocked()) return;
             var sf = null; try { sf = Engine.staadFile(result, base); } catch (err) { alert('Could not write the STAAD file: ' + err.message); return; }
             if (!sf) { alert('Run a structurally supported design first.'); return; }
             var blob = new Blob([sf.text], { type: 'text/plain' }), a = document.createElement('a');
@@ -13925,12 +14417,19 @@ var COURSE_GAP = 0.38;
     undo.onclick = function () {
       if (!STATE.history.length) return;
       STATE.input = STATE.history.pop();
-      result = solve(STATE.input); render(); rebuildModel();
+      if (manualRun(STATE.input)) {
+        STATE.calcError = null;
+        STATE.stale = JSON.stringify(STATE.input) !== STATE.resultSig;
+      } else {
+        try { result = solve(STATE.input); adopt(); }
+        catch (e) { STATE.calcError = { message: String((e && e.message) || e), goodInput: STATE.calcError ? STATE.calcError.goodInput : STATE.input }; }
+      }
+      render(); rebuildModel(); showCalcError(); showStale();
     };
     var reset = el('button', 'pill', 'Reset to workbook case'); reset.style.cssText = 'cursor:pointer;background:none;color:var(--fg)';
     reset.onclick = function () {
       STATE.input = JSON.parse(JSON.stringify(Engine.defaultInput));
-      STATE.history = []; result = solve(STATE.input); render(); rebuildModel();
+      STATE.history = []; result = solve(STATE.input); adopt(); render(); rebuildModel(); showCalcError(); showStale();
     };
     actions.appendChild(undo); actions.appendChild(reset);
     host.appendChild(actions);
@@ -13972,24 +14471,38 @@ var COURSE_GAP = 0.38;
       '<span style="flex:1"></span>' + pill(s.status.overall) + '</div>';
     if (r.tower) h += prelimBanner();
 
-    var fc = Engine.countBySeverity(r.findings);
+    // Guided steps: checks of steps not done yet wait until the user reaches them (or asks to see all)
+    var shownF = r.findings, waiting = [];
+    if (guidedOn() && !STATE.showAllFindings) {
+      shownF = r.findings.filter(function (x) { var sid = stepOfWhere(x.where); if (!sid || STATE.stepsDone[sid]) return true; waiting.push(sid); return false; });
+    }
+    var fc = Engine.countBySeverity(shownF);
     var chips = '<div class="sev-bar">';
     if (fc.error) chips += '<span class="sev-chip error"><i></i>' + fc.error + ' error' + (fc.error > 1 ? 's' : '') + '</span>';
     if (fc.warning) chips += '<span class="sev-chip warning"><i></i>' + fc.warning + ' warning' + (fc.warning > 1 ? 's' : '') + '</span>';
     if (fc.advice) chips += '<span class="sev-chip advice"><i></i>' + fc.advice + ' advice</span>';
-    if (!r.findings.length) chips += '<span class="sev-chip none"><i></i>no findings</span>';
+    if (!shownF.length) chips += '<span class="sev-chip none"><i></i>no findings</span>';
     chips += '</div>';
 
     h += '<details class="group"' + (fc.error ? ' open' : opened('findings')) + '><summary>Validation</summary><div class="body">' +
       chips + '<div class="findings">';
-    r.findings.forEach(function (x) {
+    if (waiting.length) {
+      var wl = []; waiting.forEach(function (sid) { if (wl.indexOf(sid) < 0) wl.push(sid); });
+      h += '<p class="hint" style="padding:8px 16px;margin:0">' + waiting.length + ' more check result' + (waiting.length > 1 ? 's' : '') +
+        ' belong to steps not done yet (' + wl.map(function (sid) { var si = stepInfo(sid); return si ? si.n + ' ' + TABS.filter(function (tb) { return tb.id === sid; })[0].label : sid; }).join(', ') +
+        '). They appear when you finish those steps. <a href="#" data-showall="1">Show all now</a></p>';
+    } else if (STATE.showAllFindings && guidedOn()) h += '<p class="hint" style="padding:8px 16px;margin:0"><a href="#" data-showall="0">Show only the steps done</a></p>';
+    shownF.forEach(function (x) {
+      var sid = (x.severity === 'error' || x.severity === 'warning') ? stepOfWhere(x.where) : null, si = sid ? stepInfo(sid) : null;
+      var tool = sid && STEP_TOOLS[sid] ? ' (automatic sizing there: ' + STEP_TOOLS[sid] + ')' : '';
       h += '<div class="finding ' + x.severity + '"><div class="sev"></div><div>' +
         '<div class="ttl">' + x.title + '</div>' +
         '<div class="det">' + x.detail + '</div>' +
         '<div class="meta">' + (x.clause ? '<b>' + x.clause + '</b> · ' : '') + x.where + '</div>' +
+        (si && sid !== currentTab().id ? '<div class="goto"><a href="#" data-goto="' + sid + '">Go to step ' + si.n + ' \u00B7 ' + TABS.filter(function (tb) { return tb.id === sid; })[0].label + tool + ' \u25B8</a></div>' : '') +
         '</div></div>';
     });
-    if (!r.findings.length) {
+    if (!shownF.length) {
       h += '<p class="hint" style="padding:12px 16px">Nothing to flag. Inputs are internally consistent and every code minimum is met.</p>';
     }
     h += '</div></div></details>';
@@ -14119,6 +14632,8 @@ var COURSE_GAP = 0.38;
     h += '</tbody></table></div></div></details>';
 
     host.innerHTML = h;
+    host.querySelectorAll('a[data-goto]').forEach(function (a) { a.onclick = function (e) { e.preventDefault(); selectTab(a.getAttribute('data-goto')); }; });
+    host.querySelectorAll('a[data-showall]').forEach(function (a) { a.onclick = function (e) { e.preventDefault(); STATE.showAllFindings = a.getAttribute('data-showall') === '1'; render(); showStale(); }; });
     BASE3D.lastR = r;
     if (BASE3D.open) { clearTimeout(BASE3D.timer); BASE3D.timer = setTimeout(function () { if (BASE3D.open) openBase3D(r, BASE3D.open.state()); }, 200); }
 
@@ -14241,6 +14756,7 @@ var COURSE_GAP = 0.38;
 
     var btnGA = $('#fab-generate-ga');
     if (btnGA) btnGA.onclick = function () {
+      if (calcBlocked()) return;
       var status = $('#fab-status');
       status.hidden = false; status.className = 'fabgen-status fabgen-status-busy'; status.textContent = 'Generating…'; btnGA.disabled = true;
       setTimeout(function () {
@@ -14999,6 +15515,7 @@ var COURSE_GAP = 0.38;
     renderReport();
     renderWorkbench();
     try { renderMemberCard(); } catch (eCard) {}
+    try { renderGuide(); } catch (eGuide) { console.warn(eGuide); }
   }
 
   /* ── Workbench shell: menu bar, icon rail, page title, status bar ─────
@@ -15041,7 +15558,9 @@ var COURSE_GAP = 0.38;
     TABS.forEach(function (tb) {
       if (tb.structuralOnly && !(STATE.input.support && STATE.input.support.type === 'structural')) return;
       if (tb.guyedOnly && !(STATE.input.support && STATE.input.support.type === 'guyed')) return;
-      var b = el('button', 'wbtab' + (tb.id === t.id ? ' on' : ''), '<i>' + tb.icon + '</i><span>' + tb.label + '</span>');
+      var gs = guidedOn() && tb.id !== 'view3d' ? stepInfo(tb.id) : null;
+      var b = el('button', 'wbtab' + (tb.id === t.id ? ' on' : ''), '<i>' + tb.icon + '</i><span>' + tb.label + '</span>' +
+        (gs ? '<b class="stp">' + gs.n + '</b>' + (gs.status ? '<em class="sd sd-' + gs.status + '" title="' + STEP_STATUS_TEXT[gs.status] + '"></em>' : '') : ''));
       b.type = 'button'; b.title = tb.label;
       b.onclick = function () { selectTab(tb.id); };
       railEl.appendChild(b);
@@ -18068,6 +18587,7 @@ var COURSE_GAP = 0.38;
   /** Word report: the same content as the printed report, as an editable .docx. */
   function exportWordReport(btn) {
     if (!result) return Promise.resolve(null);
+    if (calcBlocked()) return Promise.resolve(null);
     var label = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = 'Preparing…'; }
     var pane = $('#reportpane');
@@ -18087,6 +18607,43 @@ var COURSE_GAP = 0.38;
       .then(function (v) { if (btn) { btn.disabled = false; btn.textContent = label; } return v; });
   }
   window.exportWordReport = exportWordReport;
+
+  /* Host hook for the desktop program (desktop/). Lets the desktop shell
+     read the current design and open one from disk through the same
+     Engine.toFile / Engine.fromFile / loadOutcome path the Export and Open
+     buttons use, so a desktop save is byte-for-byte the web export format.
+     Unused in the browser. */
+  window.StackStudioHost = {
+    designName: function () { return STATE.designName || 'Untitled design'; },
+    // for the automated tests: the result now on screen, and whether an analysis is running
+    currentResult: function () { return result; },
+    isCalculating: function () { return CALC.busy; },
+    calcMode: function () { return CALC.noWorker ? 'screen' : (CALC.worker ? 'worker' : 'not started'); },
+    signature: function () { return (STATE.designName || '') + '\n' + JSON.stringify(STATE.input); },
+    fileText: function () {
+      return JSON.stringify(Engine.toFile(STATE.input, STATE.designName), null, 2);
+    },
+    openText: function (text, label) {
+      loadOutcome(Engine.fromFile(String(text)), label || 'file');
+      return STATE.designName;
+    },
+    // opts (optional): { name, project: { client, site, orderNo, preparedBy, checkedBy, ... } }
+    newDesign: function (opts) {
+      opts = opts || {};
+      var input = JSON.parse(JSON.stringify(Engine.defaultInput));
+      if (opts.project) input.project = Object.assign({}, input.project, opts.project);
+      loadOutcome({ input: input, name: opts.name || 'Untitled design', notes: [] }, 'new');
+    },
+    // A new design that starts as a copy of a saved one, with a new name and project details.
+    newFromText: function (text, opts) {
+      opts = opts || {};
+      var o = Engine.fromFile(String(text));
+      if (opts.project) o.input.project = Object.assign({}, o.input.project, opts.project);
+      if (opts.name) o.name = opts.name;
+      loadOutcome(o, opts.label || 'a copied design');
+      return STATE.designName;
+    }
+  };
 
   boot();
 })();
