@@ -116,6 +116,9 @@ service cloud.firestore {
     match /rate_limit_events/{eventId} {
       allow read, write: if false;
     }
+    match /forgePlanMes/{document=**} {
+      allow read, write: if false;
+    }
 
     // Anything not matched above is denied. Adding a new collection later
     // means adding its rules here deliberately — the default is no access,
