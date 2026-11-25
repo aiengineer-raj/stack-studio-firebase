@@ -38,6 +38,26 @@
         ] }
       ],
       "site": "veplworks-workboard-edb56"
+    },
+    {
+      "site": "veplworks-plan",
+      "public": "plan/public",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "rewrites": [
+        { "source": "/api/**", "function": { "functionId": "planApi", "region": "asia-south1" } },
+        { "source": "**", "destination": "/index.html" }
+      ],
+      "headers": [
+        {
+          "source": "/index.html",
+          "headers": [
+            { "key": "X-Content-Type-Options", "value": "nosniff" },
+            { "key": "Referrer-Policy", "value": "no-referrer" },
+            { "key": "X-Frame-Options", "value": "DENY" },
+            { "key": "Cache-Control", "value": "no-store" }
+          ]
+        }
+      ]
     }
   ],
   "firestore": [
@@ -47,6 +67,7 @@
   "functions": [
     { "source": "functions", "runtime": "nodejs20" },
     { "source": "workboard/functions", "codebase": "vepl-workboard", "runtime": "nodejs22" },
-    { "source": "engine-proxy", "codebase": "engine", "runtime": "nodejs22" }
+    { "source": "engine-proxy", "codebase": "engine", "runtime": "nodejs22" },
+    { "source": "plan/functions", "codebase": "vepl-plan", "runtime": "nodejs22" }
   ]
 }
