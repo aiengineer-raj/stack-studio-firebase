@@ -275,15 +275,17 @@ export function MonthlyGanttView({
           <table className="data-table gantt-table">
             <thead>
               <tr>
-                <th>Sr</th>
-                <th>Project No</th>
-                <th>Customer</th>
-                <th>Item</th>
-                <th className="text-right">Wt (T)</th>
-                <th>Plan Start</th>
-                <th>Plan End</th>
-                <th>%</th>
-                <th>Status</th>
+                <th title="Row number in active month schedule">Sr</th>
+                <th title="Veda Project No">Project No</th>
+                <th title="Customer name from Masters">Customer</th>
+                <th title="Deliverable equipment item">Item</th>
+                <th className="text-right" title="Final fabrication weight in Metric Tons">
+                  Wt (T)
+                </th>
+                <th title="Scheduled fabrication start date">Plan Start</th>
+                <th title="Scheduled fabrication completion date">Plan End</th>
+                <th title="Overall item completion percentage">%</th>
+                <th title="Current production status">Status</th>
                 {gantt.bounds.dates.map((d) => {
                   const isToday = d.iso === asOfDate
                   return (
@@ -292,14 +294,19 @@ export function MonthlyGanttView({
                       className={`gantt-day-th ${d.isSunday ? 'sunday' : ''} ${
                         isToday ? 'today' : ''
                       }`}
-                      title={d.iso}
+                      title={isToday ? `${d.iso} (Reference Date)` : d.iso}
                     >
                       <div>{d.weekdayShort}</div>
                       <div style={{ fontWeight: 800, fontSize: 11 }}>{d.day}</div>
                     </th>
                   )
                 })}
-                <th className="text-right">Done (mo)</th>
+                <th
+                  className="text-right"
+                  title="Count of days logged as Done or Item Completed within this calendar month"
+                >
+                  Done (mo)
+                </th>
               </tr>
             </thead>
             <tbody>

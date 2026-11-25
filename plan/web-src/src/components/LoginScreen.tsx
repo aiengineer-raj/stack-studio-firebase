@@ -1,5 +1,14 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, CalendarRange, KeyRound, Mail, RefreshCw, ShieldCheck, Wrench } from 'lucide-react'
+import {
+  ArrowLeft,
+  CalendarRange,
+  ExternalLink,
+  KeyRound,
+  Mail,
+  RefreshCw,
+  ShieldCheck,
+  Wrench,
+} from 'lucide-react'
 import { api, setStoredToken } from '../api.ts'
 import type { UserPublic } from '../shared/types.ts'
 
@@ -27,7 +36,7 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: (user: UserP
     setError('')
     setInfo('')
     if (!normalizedEmail.endsWith('@vedaengg.com')) {
-      setError('Use your @vedaengg.com work email address.')
+      setError('Please enter your @vedaengg.com work email address.')
       return
     }
     setLoading(true)
@@ -36,7 +45,7 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: (user: UserP
       setChallenge(res.challenge)
       setCode('')
       setCooldown(res.resendAfter || 60)
-      setInfo(`6-digit sign-in code sent to ${normalizedEmail}. Expires in 10 minutes.`)
+      setInfo(`Sent a 6-digit verification code to ${normalizedEmail}. Valid for 10 minutes.`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not send verification code.')
     } finally {
@@ -81,45 +90,128 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: (user: UserP
     <div className="login-page">
       <section className="login-hero">
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div className="brand-mark">FP</div>
-            <div>
-              <div className="brand-title" style={{ fontSize: 17 }}>
-                ForgePlan MES · Veda Engineering
-              </div>
-              <div className="brand-subtitle">
-                Heavy Fabrication &amp; Equipment Production Control
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              flexWrap: 'wrap',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div className="brand-mark">VEPL</div>
+              <div>
+                <div className="brand-title" style={{ fontSize: 16 }}>
+                  Veda Engineering Pvt. Ltd.
+                </div>
+                <div className="brand-subtitle mono" style={{ fontSize: 10.5, letterSpacing: '0.08em' }}>
+                  SINCE 1995 · MONTHLY PRODUCTION PLAN &amp; OTM CONTROL
+                </div>
               </div>
             </div>
+
+            <a className="vepl-portal-link" href="https://veplworks.com">
+              <ArrowLeft size={13} /> veplworks.com
+            </a>
           </div>
 
           <h1>
-            Unified Manufacturing Plan, OTM Register &amp; Shop-Floor Execution
+            Shop-Floor Production Schedule, OTM Register &amp; Monthly Cost Control
           </h1>
           <p>
-            Purpose-built from your Manufacturing Monthly Plan workbook. Manage Masters, track
-            100+ OTM equipment items, log daily shop-floor progress, inspect monthly Gantt
-            schedules, and monitor MIS cost-per-kg in real time.
+            Veda Engineering&rsquo;s live cloud workspace for planning and tracking heavy fabrication
+            across self-supporting steel chimneys, storage tanks, ducting, and support structures —
+            connecting planning engineers, shop-floor supervisors, sub-vendors, and management in one
+            place.
           </p>
 
           <div className="hero-metrics">
             <div className="hero-metric-box">
-              <div className="hero-metric-num">49</div>
-              <div className="hero-metric-lbl">Registered Customer Projects</div>
+              <div className="hero-metric-num">OTM → Shop</div>
+              <div className="hero-metric-lbl">
+                Track weights, drawings, material readiness, Shop vs Sub-Vendor POs &amp; dispatch
+              </div>
             </div>
             <div className="hero-metric-box">
-              <div className="hero-metric-num">120.8 T</div>
-              <div className="hero-metric-lbl">Tracked OTM Equipment Weight</div>
+              <div className="hero-metric-num">Live Gantt</div>
+              <div className="hero-metric-lbl">
+                Daily shop-floor logs update % completion, delayed alerts &amp; monthly bars automatically
+              </div>
             </div>
             <div className="hero-metric-box">
-              <div className="hero-metric-num">2-Way</div>
-              <div className="hero-metric-lbl">Live .XLSX Import &amp; Export</div>
+              <div className="hero-metric-num">2-Way .XLSX</div>
+              <div className="hero-metric-lbl">
+                Import or export the full 6-sheet Excel workbook anytime with permanent Firestore storage
+              </div>
+            </div>
+          </div>
+
+          <div className="hero-workflow-list">
+            <div className="hero-workflow-step">
+              <div className="hero-workflow-num">Step 01 · Masters</div>
+              <div className="hero-workflow-title">Register Customer Projects &amp; Sub-Vendors</div>
+              <div className="hero-workflow-desc">
+                Add each Veda Project No, Customer Name, Active/Hold status, and approved sub-vendors
+                once so they cascade everywhere.
+              </div>
+            </div>
+
+            <div className="hero-workflow-step">
+              <div className="hero-workflow-num">Step 02 · OTM - PROD</div>
+              <div className="hero-workflow-title">Schedule Deliverable Equipment Items</div>
+              <div className="hero-workflow-desc">
+                Enter equipment items with drawing/cost-sheet weight, material status, fabrication
+                location, Plan Start, Plan End, and committed delivery dates.
+              </div>
+            </div>
+
+            <div className="hero-workflow-step">
+              <div className="hero-workflow-num">Step 03 · Daily Plan</div>
+              <div className="hero-workflow-title">Log Daily Shop-Floor Fabrication</div>
+              <div className="hero-workflow-desc">
+                Supervisors record daily work (shell rolling, seam welding, fit-up, painting) as
+                Done, In Progress, Not Done, or Item Completed.
+              </div>
+            </div>
+
+            <div className="hero-workflow-step">
+              <div className="hero-workflow-num">Step 04 · Gantt &amp; MIS</div>
+              <div className="hero-workflow-title">Monitor Delays, Tonnage &amp; Cost/Kg</div>
+              <div className="hero-workflow-desc">
+                Review day-by-day Monthly Gantt execution, overdue dispatch alerts on Dashboard, and
+                12-month factory ₹/Kg cost efficiency.
+              </div>
             </div>
           </div>
         </div>
 
-        <div style={{ fontSize: 12, color: 'var(--sidebar-muted)' }}>
-          Veda Engineering Pvt. Ltd. · Staff Access via verified @vedaengg.com email OTP
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: 8,
+            fontSize: 12,
+            color: 'var(--sidebar-muted)',
+            borderTop: '1px solid rgba(255,255,255,0.08)',
+            paddingTop: 14,
+          }}
+        >
+          <span>Veda Engineering Pvt. Ltd. · Internal Staff Workspace</span>
+          <a
+            href="https://veplworks.com"
+            style={{
+              color: 'hsl(208, 86%, 74%)',
+              textDecoration: 'none',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+            }}
+          >
+            All Veda Engineering Tools <ExternalLink size={12} />
+          </a>
         </div>
       </section>
 
@@ -127,12 +219,12 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: (user: UserP
         <div className="login-box">
           <div>
             <h2 style={{ fontSize: 20, fontWeight: 700, letterSpacing: '-0.02em' }}>
-              {challenge ? 'Enter Verification Code' : 'Sign in with Veda Email'}
+              {challenge ? 'Enter 6-Digit Verification Code' : 'Staff Sign-In (@vedaengg.com)'}
             </h2>
-            <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 5, lineHeight: 1.5 }}>
               {challenge
-                ? `Check ${normalizedEmail} for your one-time 6-digit code.`
-                : 'Sign in with your @vedaengg.com work email — same OTP sign-in as Team Workboard.'}
+                ? `We emailed a one-time 6-digit code to ${normalizedEmail}. Enter it below to open the production workspace.`
+                : 'Enter your official @vedaengg.com email address. We will send a one-time 6-digit verification code — no separate password required.'}
             </p>
           </div>
 
@@ -176,30 +268,34 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: (user: UserP
                   id="login-email"
                   type="email"
                   className="input-control"
-                  placeholder="name@vedaengg.com"
+                  placeholder="firstname.lastname@vedaengg.com"
                   autoComplete="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
                 />
+                <span className="field-hint">
+                  Restricted to verified <code>@vedaengg.com</code> staff accounts (same sign-in as
+                  Team Workboard &amp; StackStudio).
+                </span>
               </div>
 
               <button
                 id="login-submit-btn"
                 type="submit"
                 className="btn btn-primary"
-                style={{ height: 38, marginTop: 4 }}
+                style={{ height: 39, marginTop: 2 }}
                 disabled={loading}
               >
                 <Mail size={15} />
-                {loading ? 'Sending code...' : 'Send 6-Digit Sign-In Code'}
+                {loading ? 'Sending verification code...' : 'Send 6-Digit Sign-In Code'}
               </button>
             </form>
           ) : (
             <form onSubmit={handleVerifyCode} style={{ display: 'flex', flexDirection: 'column', gap: 13 }}>
               <div className="field-group">
                 <label className="field-label" htmlFor="login-code">
-                  6-Digit Verification Code
+                  One-Time Verification Code
                 </label>
                 <input
                   id="login-code"
@@ -209,24 +305,27 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: (user: UserP
                   maxLength={6}
                   autoComplete="one-time-code"
                   className="input-control mono"
-                  style={{ fontSize: 18, letterSpacing: '0.25em', textAlign: 'center', height: 42 }}
+                  style={{ fontSize: 19, letterSpacing: '0.28em', textAlign: 'center', height: 44 }}
                   placeholder="000000"
                   value={code}
                   onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                   autoFocus
                   required
                 />
+                <span className="field-hint">
+                  Code expires in 10 minutes. Check your inbox (and spam folder if delayed).
+                </span>
               </div>
 
               <button
                 id="verify-code-btn"
                 type="submit"
                 className="btn btn-primary"
-                style={{ height: 38, marginTop: 4 }}
+                style={{ height: 39, marginTop: 2 }}
                 disabled={loading || code.length !== 6}
               >
                 <KeyRound size={15} />
-                {loading ? 'Verifying...' : 'Verify & Open Workspace'}
+                {loading ? 'Verifying...' : 'Verify & Open Production Workspace'}
               </button>
 
               <div
@@ -265,57 +364,60 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: (user: UserP
             </form>
           )}
 
-          <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: 16 }}>
+          <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: 15 }}>
             <div
               style={{
-                fontSize: 11.5,
+                fontSize: 11,
                 fontWeight: 700,
                 textTransform: 'uppercase',
                 letterSpacing: '0.06em',
                 color: 'var(--text-muted)',
-                marginBottom: 10,
+                marginBottom: 9,
               }}
             >
-              Workspace Access Levels
+              How Role Permissions Work Inside
             </div>
             <div className="role-demo-list">
-              <div className="role-demo-card" style={{ cursor: 'default' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <ShieldCheck size={18} color="var(--brand-primary)" />
+              <div className="role-demo-card">
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                  <ShieldCheck size={17} color="var(--brand-primary)" style={{ marginTop: 2, flexShrink: 0 }} />
                   <div>
-                    <div style={{ fontWeight: 700, fontSize: 13 }}>
+                    <div style={{ fontWeight: 700, fontSize: 12.5 }}>
                       Admin / Management
                     </div>
-                    <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
-                      Full access · MIS Cost Ledger · Masters &amp; Roles · OTM · Daily Plan
+                    <div style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>
+                      Full access: Masters projects &amp; sub-vendors, staff role assignment, OTM
+                      schedule, Daily Plan, and monthly MIS ₹/Kg cost ledger.
                     </div>
                   </div>
                 </div>
               </div>
 
-              <div className="role-demo-card" style={{ cursor: 'default' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <CalendarRange size={18} color="var(--brand-accent)" />
+              <div className="role-demo-card">
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                  <CalendarRange size={17} color="var(--brand-accent)" style={{ marginTop: 2, flexShrink: 0 }} />
                   <div>
-                    <div style={{ fontWeight: 700, fontSize: 13 }}>
+                    <div style={{ fontWeight: 700, fontSize: 12.5 }}>
                       Production Planner
                     </div>
-                    <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
-                      Edit OTM-PROD &amp; Schedules · Daily Plan · Two-Way Excel Sync
+                    <div style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>
+                      Add &amp; update OTM equipment items, planned dates, sub-vendor POs, Daily
+                      Plan logs, Monthly Gantt, and two-way Excel (.xlsx) sync.
                     </div>
                   </div>
                 </div>
               </div>
 
-              <div className="role-demo-card" style={{ cursor: 'default' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <Wrench size={18} color="var(--st-completed-fg)" />
+              <div className="role-demo-card">
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                  <Wrench size={17} color="var(--st-completed-fg)" style={{ marginTop: 2, flexShrink: 0 }} />
                   <div>
-                    <div style={{ fontWeight: 700, fontSize: 13 }}>
-                      Shop-Floor Supervisor
+                    <div style={{ fontWeight: 700, fontSize: 12.5 }}>
+                      Shop-Floor Supervisor (Default for new staff)
                     </div>
-                    <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
-                      Log Daily Shop-Floor Work · View OTM &amp; Monthly Gantt
+                    <div style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>
+                      Log &amp; update daily shop-floor work in Daily Plan and Monthly Gantt;
+                      read-only visibility across Dashboard, OTM &amp; Masters.
                     </div>
                   </div>
                 </div>

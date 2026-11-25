@@ -199,15 +199,29 @@ export function MisView({
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Month</th>
-                  <th className="text-right">Items Planned</th>
-                  <th className="text-right">Items Done</th>
-                  <th className="text-right">Planned (T)</th>
-                  <th className="text-right">Achieved (T)</th>
-                  <th className="text-right">Variance (T)</th>
-                  <th>Achievement %</th>
-                  <th className="text-right">Dispatched</th>
-                  <th className="text-right">On Time</th>
+                  <th title="Calendar month in the 12-month MIS window">Month</th>
+                  <th className="text-right" title="OTM items whose Plan End falls in this month">
+                    Items Planned
+                  </th>
+                  <th className="text-right" title="OTM items whose Completion Date falls in this month">
+                    Items Done
+                  </th>
+                  <th className="text-right" title="Total Final Weight (Tons) scheduled to finish in this month">
+                    Planned (T)
+                  </th>
+                  <th className="text-right" title="Total Final Weight (Tons) actually completed in this month">
+                    Achieved (T)
+                  </th>
+                  <th className="text-right" title="Achieved Tonnage minus Planned Tonnage">
+                    Variance (T)
+                  </th>
+                  <th title="Achieved Tonnage ÷ Planned Tonnage">Achievement %</th>
+                  <th className="text-right" title="Items with Actual Dispatch Date in this month">
+                    Dispatched
+                  </th>
+                  <th className="text-right" title="Items dispatched on or before Committed Delivery Date">
+                    On Time
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -390,10 +404,30 @@ export function MisView({
                     {f.label}
                   </th>
                 ))}
-                <th className="text-right">Total Expenses (Rs.)</th>
-                <th className="text-right">Completed (T)</th>
-                <th className="th-editable text-right">WIP (T)</th>
-                <th className="text-right">Cost / Kg (Rs.)</th>
+                <th
+                  className="text-right"
+                  title="Auto: Sum of all Fixed, Sub-Contract, Direct Labour, Consumables, MISC & R&M charges for the month"
+                >
+                  Total Expenses (Rs.)
+                </th>
+                <th
+                  className="text-right"
+                  title="Auto: Total Final Weight (Tons) of OTM items completed during this month"
+                >
+                  Completed (T)
+                </th>
+                <th
+                  className="th-editable text-right"
+                  title="Optional manual entry: Work-in-Progress tonnage on the shop floor at month-end"
+                >
+                  WIP (T)
+                </th>
+                <th
+                  className="text-right"
+                  title="Auto: Total Monthly Expenses (Rs.) ÷ (Completed Output Tons × 1,000)"
+                >
+                  Cost / Kg (Rs.)
+                </th>
               </tr>
             </thead>
 

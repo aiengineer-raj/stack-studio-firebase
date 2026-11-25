@@ -95,41 +95,50 @@ export function DashboardView({
           type="button"
           className="kpi-tile"
           onClick={() => onDrillToOtm({})}
-          title="View all items in OTM - PROD"
+          title="Total fabricable deliverable items registered in OTM - PROD. Click to view all items."
         >
           <span className="kpi-label">
-            Total Items <ExternalLink size={12} />
+            Total Equipment Items <ExternalLink size={12} />
           </span>
           <span className="kpi-value">{kpis.total_items}</span>
-          <span className="kpi-foot">{kpis.total_weight_tons.toFixed(3)} T total weight</span>
+          <span className="kpi-foot">
+            {kpis.total_weight_tons.toFixed(3)} T combined fabrication weight
+          </span>
         </button>
 
         <button
           type="button"
           className="kpi-tile"
           onClick={() => onDrillToOtm({ prodStatus: 'Completed' })}
+          title="Items marked Dispatched, logged as 'Item Completed' in Daily Plan, or where Done days >= Planned days."
         >
           <span className="kpi-label">
-            Completed <CheckCircle2 size={13} color="var(--st-completed-fg)" />
+            Completed Items <CheckCircle2 size={13} color="var(--st-completed-fg)" />
           </span>
           <span className="kpi-value success">{kpis.completed}</span>
-          <span className="kpi-foot">{kpis.wt_completed_tons.toFixed(3)} T completed</span>
+          <span className="kpi-foot">
+            {kpis.wt_completed_tons.toFixed(3)} T finished fabrication output
+          </span>
         </button>
 
         <button
           type="button"
           className="kpi-tile"
           onClick={() => onDrillToOtm({ prodStatus: 'In Progress' })}
+          title="Active items with at least 1 'Done' day logged in Daily Plan whose Plan End date has not yet passed."
         >
-          <span className="kpi-label">In Progress</span>
+          <span className="kpi-label">Active on Shop Floor</span>
           <span className="kpi-value">{kpis.in_progress}</span>
-          <span className="kpi-foot">{kpis.not_started} planned, not started</span>
+          <span className="kpi-foot">
+            Plus {kpis.not_started} scheduled items awaiting start
+          </span>
         </button>
 
         <button
           type="button"
           className="kpi-tile"
           onClick={() => onDrillToOtm({ prodStatus: 'Delayed' })}
+          title="Items whose Plan End date is earlier than the Reference Date and fabrication is not yet Completed."
         >
           <span className="kpi-label">
             Production Delayed <AlertTriangle size={13} color="var(--st-delayed-fg)" />
@@ -137,45 +146,49 @@ export function DashboardView({
           <span className={`kpi-value ${kpis.delayed > 0 ? 'danger' : ''}`}>
             {kpis.delayed}
           </span>
-          <span className="kpi-foot">Plan End passed as of {formatShortDate(asOfDate)}</span>
+          <span className="kpi-foot">Past Plan End as of {formatShortDate(asOfDate)}</span>
         </button>
 
         <button
           type="button"
           className="kpi-tile"
           onClick={() => onDrillToOtm({ deliveryStatus: 'Overdue' })}
+          title="Items whose Committed Customer Delivery Date has passed without an Actual Dispatch Date recorded."
         >
           <span className="kpi-label">
-            Delivery Overdue <Clock size={13} color="var(--st-delayed-fg)" />
+            Dispatch Overdue <Clock size={13} color="var(--st-delayed-fg)" />
           </span>
           <span className={`kpi-value ${kpis.delivery_overdue > 0 ? 'danger' : ''}`}>
             {kpis.delivery_overdue}
           </span>
-          <span className="kpi-foot">{kpis.due_in_15_days} due in next 15 days</span>
+          <span className="kpi-foot">{kpis.due_in_15_days} more due within next 15 days</span>
         </button>
 
         <button
           type="button"
           className="kpi-tile"
           onClick={() => onDrillToOtm({ prodStatus: 'On Hold' })}
+          title="Left number: items under Hold projects in Masters. Right number: items missing Plan Start & Plan End dates."
         >
-          <span className="kpi-label">On Hold / Unplanned</span>
+          <span className="kpi-label">On Hold / Unscheduled</span>
           <span className="kpi-value warning">
-            {kpis.on_hold} <span style={{ fontSize: 14, color: 'var(--text-muted)' }}>/ {kpis.not_planned}</span>
+            {kpis.on_hold}{' '}
+            <span style={{ fontSize: 14, color: 'var(--text-muted)' }}>/ {kpis.not_planned}</span>
           </span>
-          <span className="kpi-foot">Hold projects / missing plan dates</span>
+          <span className="kpi-foot">Customer Hold / awaiting plan dates</span>
         </button>
 
         <button
           type="button"
           className="kpi-tile"
           onClick={() => onDrillToOtm({ dataCheck: 'issues' })}
+          title="Automatic audit of OTM rows missing weight, fabrication location, sub-vendor name, or plan dates."
         >
-          <span className="kpi-label">Data Check Issues</span>
+          <span className="kpi-label">Missing Data Flags</span>
           <span className={`kpi-value ${kpis.data_issues > 0 ? 'warning' : 'success'}`}>
             {kpis.data_issues}
           </span>
-          <span className="kpi-foot">Click to audit missing OTM fields</span>
+          <span className="kpi-foot">Click to review incomplete OTM rows</span>
         </button>
       </div>
 
@@ -414,15 +427,27 @@ export function DashboardView({
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Project No</th>
-                  <th>Customer</th>
-                  <th className="text-right">Items</th>
-                  <th className="text-right">Wt (T)</th>
-                  <th className="text-right">Done</th>
-                  <th className="text-right">Delayed</th>
-                  <th>Avg %</th>
-                  <th>Next Delivery</th>
-                  <th>Status</th>
+                  <th title="Veda customer order / project code">Project No</th>
+                  <th title="Customer name linked from Masters">Customer</th>
+                  <th className="text-right" title="Number of equipment items in OTM - PROD">
+                    Items
+                  </th>
+                  <th className="text-right" title="Combined final fabrication weight in Metric Tons">
+                    Wt (T)
+                  </th>
+                  <th className="text-right" title="Number of Completed items">
+                    Done
+                  </th>
+                  <th className="text-right" title="Items past Plan End date that are not yet Completed">
+                    Delayed
+                  </th>
+                  <th title="Average completion percentage across all items in this project">
+                    Avg %
+                  </th>
+                  <th title="Earliest upcoming Committed Delivery Date among undispatched items">
+                    Next Delivery
+                  </th>
+                  <th title="Overall rolled-up production status for this project">Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -483,7 +508,7 @@ export function DashboardView({
                 Attention List — Delayed &amp; Overdue ({filteredAttention.length})
               </div>
               <div className="card-subtitle">
-                Items requiring immediate shop-floor or dispatch escalation
+                Items past Plan End or past Committed Delivery Date requiring immediate follow-up
               </div>
             </div>
             <div className="search-box" style={{ minWidth: 170, maxWidth: 210 }}>
@@ -502,13 +527,18 @@ export function DashboardView({
               <thead>
                 <tr>
                   <th>#</th>
-                  <th>Project</th>
-                  <th>Item</th>
-                  <th>Plan End</th>
-                  <th>%</th>
-                  <th>Status</th>
-                  <th>Delivery</th>
-                  <th className="text-right">Late (d)</th>
+                  <th title="Veda Project No">Project</th>
+                  <th title="Deliverable equipment item description">Item</th>
+                  <th title="Scheduled production completion date">Plan End</th>
+                  <th title="Logged Done days divided by Planned days">%</th>
+                  <th title="Current shop-floor production status">Status</th>
+                  <th title="Customer dispatch & delivery status">Delivery</th>
+                  <th
+                    className="text-right"
+                    title="Calendar days overdue beyond Plan End or Committed Delivery Date"
+                  >
+                    Late (d)
+                  </th>
                 </tr>
               </thead>
               <tbody>

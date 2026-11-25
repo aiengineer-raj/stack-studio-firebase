@@ -393,38 +393,73 @@ export function OtmProdView({
         <table className="data-table">
           <thead>
             <tr>
-              <th>Sr</th>
-              <th className="th-editable">Project No</th>
-              <th>Customer</th>
-              <th className="th-editable">Item Description</th>
+              <th title="Sequential serial number">Sr</th>
+              <th className="th-editable" title="Veda Project No (must exist in Masters)">
+                Project No
+              </th>
+              <th title="Auto-filled customer name from Masters">Customer</th>
+              <th className="th-editable" title="Deliverable equipment item name (used to match Daily Plan logs)">
+                Item Description
+              </th>
 
               {(colMode === 'weights' || colMode === 'all') && (
                 <>
-                  <th className="th-editable text-right">Cost Wt (Kg)</th>
-                  <th className="th-editable text-right">Drw Wt (Kg)</th>
+                  <th className="th-editable text-right" title="Estimated weight in Kg from commercial cost sheet">
+                    Cost Wt (Kg)
+                  </th>
+                  <th className="th-editable text-right" title="Released fabrication drawing weight in Kg (takes priority over Cost Sheet Wt)">
+                    Drw Wt (Kg)
+                  </th>
                 </>
               )}
-              <th className="text-right">Final Wt (T)</th>
+              <th
+                className="text-right"
+                title="Auto-calculated: Drawing Wt (Kg) if entered, otherwise Cost Sheet Wt (Kg), divided by 1,000"
+              >
+                Final Wt (T)
+              </th>
 
               {(colMode === 'weights' || colMode === 'all') && (
                 <>
-                  <th className="th-editable">Drw Rel?</th>
-                  <th className="th-editable">Material Status</th>
-                  <th className="th-editable">Mat. Req Date</th>
+                  <th className="th-editable" title="Whether engineering fabrication drawing is released to shop (Yes / No)">
+                    Drw Rel?
+                  </th>
+                  <th className="th-editable" title="Raw material availability status at shop">
+                    Material Status
+                  </th>
+                  <th className="th-editable" title="Target date raw material is required on the shop floor">
+                    Mat. Req Date
+                  </th>
                 </>
               )}
 
-              <th className="th-editable">Location</th>
+              <th className="th-editable" title="In-house Veda Shop vs outsourced Subvendor fabrication">
+                Location
+              </th>
 
               {(colMode === 'subvendor' || colMode === 'all') && (
                 <>
-                  <th className="th-editable">Sub-Vendor</th>
-                  <th className="th-editable">PO No</th>
-                  <th className="th-editable">PO Date</th>
-                  <th className="th-editable text-right">PO Value (Rs.)</th>
-                  <th className="th-editable">SV Deliv.</th>
-                  <th className="th-editable text-right">Advance (Rs.)</th>
-                  <th className="th-editable">Adv. Date</th>
+                  <th className="th-editable" title="Assigned approved sub-vendor (when Location = Subvendor)">
+                    Sub-Vendor
+                  </th>
+                  <th className="th-editable" title="Sub-contract Purchase Order number">
+                    PO No
+                  </th>
+                  <th className="th-editable" title="Purchase Order issue date">
+                    PO Date
+                  </th>
+                  <th className="th-editable text-right" title="Sub-contract PO value in Rupees">
+                    PO Value (Rs.)
+                  </th>
+                  <th className="th-editable" title="Agreed delivery date from sub-vendor">
+                    SV Deliv.
+                  </th>
+                  <th className="th-editable text-right" title="Advance payment released to sub-vendor (Rs.)">
+                    Advance (Rs.)
+                  </th>
+                  <th className="th-editable" title="Date advance payment was released">
+                    Adv. Date
+                  </th>
                 </>
               )}
 
@@ -432,32 +467,58 @@ export function OtmProdView({
                 <>
                   {colMode === 'all' && (
                     <>
-                      <th className="th-editable">Cust. Deliv.</th>
-                      <th className="th-editable">Rev. Agreed</th>
+                      <th className="th-editable" title="Original PO committed delivery date to customer">
+                        Cust. Deliv.
+                      </th>
+                      <th className="th-editable" title="Mutually revised customer delivery date (overrides Cust. Deliv. if set)">
+                        Rev. Agreed
+                      </th>
                     </>
                   )}
-                  <th className="th-editable">Plan Start</th>
-                  <th className="th-editable">Plan End</th>
-                  <th className="th-editable">Dispatch Date</th>
-                  <th className="text-right">Plan d</th>
-                  <th className="text-right">Done d</th>
+                  <th className="th-editable" title="Planned shop-floor fabrication start date">
+                    Plan Start
+                  </th>
+                  <th className="th-editable" title="Planned shop-floor fabrication completion date">
+                    Plan End
+                  </th>
+                  <th className="th-editable" title="Actual date item was dispatched from factory (marks item Completed & Dispatched)">
+                    Dispatch Date
+                  </th>
+                  <th className="text-right" title="Auto: Calendar days from Plan Start to Plan End inclusive">
+                    Plan d
+                  </th>
+                  <th className="text-right" title="Auto: Days logged 'Done' / Total days logged in Daily Plan">
+                    Done d
+                  </th>
                   {colMode === 'all' && (
                     <>
-                      <th>Actual Start</th>
-                      <th>Last Done</th>
+                      <th title="Earliest working date logged in Daily Plan">Actual Start</th>
+                      <th title="Most recent date logged as Done or Item Completed">Last Done</th>
                     </>
                   )}
-                  <th>% Complete</th>
-                  <th>Prod. Status</th>
-                  <th>Committed Deliv.</th>
-                  <th>Delivery Status</th>
-                  <th className="text-right">Late (d)</th>
+                  <th title="Auto: 100% if Completed, otherwise Done days ÷ Plan days">% Complete</th>
+                  <th title="Auto: Completed, On Hold, Delayed, In Progress, Not Started, or Not Planned">
+                    Prod. Status
+                  </th>
+                  <th title="Auto: Revised Agreed Date → else Customer Delivery Date → else Plan End">
+                    Committed Deliv.
+                  </th>
+                  <th title="Auto: Dispatched On Time / Late, Overdue, Due in 15 days, or Pending">
+                    Delivery Status
+                  </th>
+                  <th className="text-right" title="Auto: Calendar days delayed past Plan End">
+                    Late (d)
+                  </th>
                 </>
               )}
 
-              <th>Data Check</th>
-              <th className="th-editable">Remarks</th>
-              <th>Actions</th>
+              <th title="Automatic completeness audit checking Project No, weight, location, sub-vendor & plan dates">
+                Data Check
+              </th>
+              <th className="th-editable" title="Engineering, procurement, or dispatch notes">
+                Remarks
+              </th>
+              <th title="Quick-log daily shop work, edit item, or delete">Actions</th>
             </tr>
           </thead>
 

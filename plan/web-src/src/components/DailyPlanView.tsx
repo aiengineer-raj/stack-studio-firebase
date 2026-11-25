@@ -372,16 +372,37 @@ export function DailyPlanView({
           <table className="data-table">
             <thead>
               <tr>
-                <th className="th-editable">Date</th>
-                <th className="th-editable">Project No</th>
-                <th>Customer (Auto)</th>
-                <th className="th-editable">Item</th>
-                <th className="th-editable">Work Done Today</th>
-                <th className="th-editable">Status</th>
-                <th className="th-editable">Actual Comp. Date</th>
-                <th className="th-editable">Remarks</th>
-                <th>Effective Date</th>
-                <th>Entry Check</th>
+                <th className="th-editable" title="Shift / shop-floor execution date">
+                  Date
+                </th>
+                <th className="th-editable" title="Veda Project No">
+                  Project No
+                </th>
+                <th title="Auto-filled customer name from Masters">Customer (Auto)</th>
+                <th className="th-editable" title="Equipment item matching OTM - PROD exactly">
+                  Item
+                </th>
+                <th className="th-editable" title="Specific shop-floor fabrication operations completed">
+                  Work Done Today
+                </th>
+                <th
+                  className="th-editable"
+                  title="Done = +1 progress day · Item Completed = marks OTM item 100% finished · Not Done = records blocker"
+                >
+                  Status
+                </th>
+                <th className="th-editable" title="Optional override completion date if logged retroactively">
+                  Actual Comp. Date
+                </th>
+                <th className="th-editable" title="Any blocker, inspection hold, or welding note">
+                  Remarks
+                </th>
+                <th title="Auto: Actual Comp. Date if filled, otherwise Log Date">
+                  Effective Date
+                </th>
+                <th title="Automatic check verifying Date, Project No, and OTM Item match">
+                  Entry Check
+                </th>
                 <th>Actions</th>
               </tr>
             </thead>
