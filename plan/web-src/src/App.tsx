@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
+  ArrowLeft,
   BarChart3,
   BookOpen,
   CalendarDays,
   ClipboardList,
   Database,
   FileSpreadsheet,
+  HelpCircle,
+  Info,
   LayoutDashboard,
   LogOut,
   Wrench,
@@ -25,12 +28,122 @@ import type { UserPublic, UserRole, WorkspacePayload } from './shared/types.ts'
 
 type ActiveTab = 'dashboard' | 'otm' | 'daily' | 'gantt' | 'mis' | 'masters' | 'guide'
 
+const GUIDE_PREF_KEY = 'vepl_plan_show_guide'
+
 function getTodayIso(): string {
   const now = new Date()
   const y = now.getFullYear()
   const m = String(now.getMonth() + 1).padStart(2, '0')
   const d = String(now.getDate()).padStart(2, '0')
   return `${y}-${m}-${d}`
+}
+
+const TAB_CONFIG: Record<
+  ActiveTab,
+  {
+    title: string
+    subtitle: string
+    editableRoles: UserRole[]
+    guideTitle: string
+    guideText: string
+    highlights: { label: string; detail: string }[]
+    showCellLegend?: boolean
+  }
+> = {
+  dashboard: {
+    title: 'Executive Production Dashboard',
+    subtitle: 'Live shop-floor & sub-vendor KPIs, project progress, and overdue dispatch alerts',
+    editableRoles: [],
+    guideTitle: 'How the Production Dashboard Works',
+    guideText:
+      'Every number and chart below is calculated automatically from OTM - PROD and Daily Plan against the selected Reference Date ("As on") in the top bar. Click any KPI card, status bar, or project row to jump directly into the matching equipment items.',
+    highlights: [
+      { label: 'Click-to-Drill', detail: 'Click any KPI tile or project row to filter OTM - PROD' },
+      { label: 'Production Delayed', detail: 'Plan End date has passed & item is not yet Completed' },
+      { label: 'Delivery Overdue', detail: 'Committed delivery date passed without Actual Dispatch Date' },
+    ],
+  },
+  otm: {
+    title: 'OTM - PROD · Master Equipment Register',
+    subtitle: 'Order-to-Manufacturing register for weights, drawings, material readiness, sub-vendor POs & dispatch',
+    editableRoles: ['admin', 'planner'],
+    guideTitle: 'How OTM - PROD Works (Master Item Schedule)',
+    guideText:
+      'Each row represents one fabricable deliverable (chimney shell, tank, cone, ducting, or structure) linked to a Veda Project No from Masters. Planners & Admins enter weights, fabrication location (Shop vs Subvendor), and Plan Start / Plan End dates; % Complete and Production Status update automatically as Daily Plan logs come in.',
+    highlights: [
+      { label: 'Final Wt (T)', detail: 'Uses Drawing Wt (Kg) if entered, else Cost Sheet Wt ÷ 1000' },
+      { label: 'Committed Delivery', detail: 'Revised Agreed Date → else Customer Delivery → else Plan End' },
+      { label: 'Column Views', detail: 'Switch tabs on the right to inspect Weights, Sub-Vendor POs, or All 37 Columns' },
+    ],
+    showCellLegend: true,
+  },
+  daily: {
+    title: 'Daily Plan · Shop-Floor Fabrication Log',
+    subtitle: 'Record daily bay execution, fit-up, rolling, welding, painting & completion status',
+    editableRoles: ['admin', 'planner', 'supervisor'],
+    guideTitle: 'How Daily Shop-Floor Logging Updates the Entire Plan',
+    guideText:
+      'Supervisors, Planners, and Admins log daily shop-floor progress here. Selecting a Project No automatically filters the Item dropdown to items registered in OTM - PROD. Every "Done" entry advances % Complete, and logging "Item Completed" immediately marks the OTM deliverable 100% Completed.',
+    highlights: [
+      { label: 'Done', detail: 'Counts +1 working day toward Plan Days & % Complete' },
+      { label: 'Item Completed', detail: 'Marks the OTM item 100% Completed on that date' },
+      { label: 'Not Done / In Progress', detail: 'Records a blocker or partial shift without inflating Done days' },
+    ],
+    showCellLegend: true,
+  },
+  gantt: {
+    title: 'Monthly Plan · Interactive Gantt Matrix',
+    subtitle: 'Day-by-day visual comparison of planned schedule bars vs logged shop-floor execution',
+    editableRoles: ['admin', 'planner', 'supervisor'],
+    guideTitle: 'How to Read & Log Work from the Monthly Gantt',
+    guideText:
+      'This matrix overlays each item’s planned window (Plan Start → Plan End) with actual daily shop-floor entries for the chosen month. Click any day cell on any row to inspect what work was done on that date or log a new shop-floor entry directly.',
+    highlights: [
+      { label: 'Green ✓', detail: 'Work logged as Done / Item Completed on that date' },
+      { label: 'Blue vs Red Cell', detail: 'Blue = Planned upcoming day · Red = Planned day passed without Done log' },
+      { label: 'Carryover Toggle', detail: 'Shows unfinished items from earlier months still active on the shop floor' },
+    ],
+  },
+  mis: {
+    title: 'MIS · Monthly Tonnage & Factory Cost / Kg',
+    subtitle: '12-month rolling Plan vs Achieved output, on-time dispatch rate & ₹/Kg fabrication cost ledger',
+    editableRoles: ['admin'],
+    guideTitle: 'How MIS Tonnage & Cost-per-Kg Analytics Work',
+    guideText:
+      'Sections A & B roll up automatically from OTM - PROD and Daily Plan across a 12-month window. In Section C, Admin / Management enters monthly factory expenses (Fixed, Sub-Contract, Direct Labour, Consumables, R&M) to compute real-time Total Expenses and Fabrication Cost per Kg (₹/Kg).',
+    highlights: [
+      { label: 'Planned vs Achieved (T)', detail: 'Planned = Plan End in month · Achieved = Completion Date in month' },
+      { label: 'Cost / Kg Formula', detail: 'Total Monthly Expenses (Rs.) ÷ (Completed Output Tons × 1,000)' },
+      { label: 'Role Security', detail: 'Visible to Planners & Admins; expense editing restricted to Admin' },
+    ],
+    showCellLegend: true,
+  },
+  masters: {
+    title: 'Masters & Veda Team Role Access',
+    subtitle: 'Central register of customer projects, approved sub-vendors, dropdown lists & @vedaengg.com staff roles',
+    editableRoles: ['admin'],
+    guideTitle: 'How Masters & Staff Role Access Control Work',
+    guideText:
+      'Always register a new Project No and Customer Name here first before adding its items in OTM - PROD. Marking a project "Hold" here automatically pauses all its OTM items as "On Hold". Admins can also pre-authorize @vedaengg.com colleagues or switch anyone between Admin, Planner, and Supervisor.',
+    highlights: [
+      { label: 'Project Cascade', detail: 'Customer name & Hold status flow automatically to OTM & Daily Plan' },
+      { label: 'Sub-Vendor List', detail: 'Populates the Sub-Vendor dropdown whenever Location = Subvendor' },
+      { label: '@vedaengg.com Roles', detail: 'Role changes take effect immediately without requiring re-login' },
+    ],
+    showCellLegend: true,
+  },
+  guide: {
+    title: 'Workflow Reference & Live Audit Trail',
+    subtitle: 'Standard operating routine, workbook formula definitions, and chronological activity log',
+    editableRoles: [],
+    guideTitle: 'Standard Operating Guide & Tamper-Evident Change Log',
+    guideText:
+      'Use this reference anytime a new engineer or supervisor joins the team. Every project update, OTM schedule change, daily shop-floor log, role update, and Excel import is recorded with user name, role, and timestamp below.',
+    highlights: [
+      { label: '100% Formula Parity', detail: 'Matches every status, weight & delivery rule from your Excel workbook' },
+      { label: 'Cloud Persistence', detail: 'All changes save permanently to Veda Engineering’s Firestore database' },
+    ],
+  },
 }
 
 export function App() {
@@ -41,6 +154,9 @@ export function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard')
   const [asOfDate, setAsOfDate] = useState<string>(getTodayIso())
   const [excelModalOpen, setExcelModalOpen] = useState(false)
+  const [showGuide, setShowGuide] = useState<boolean>(() => {
+    return localStorage.getItem(GUIDE_PREF_KEY) !== '0'
+  })
 
   // Cross-tab drilldowns
   const [otmPreset, setOtmPreset] = useState<OtmFilterPreset | null>(null)
@@ -51,6 +167,14 @@ export function App() {
 
   // Toast
   const [toast, setToast] = useState<{ msg: string; isError?: boolean } | null>(null)
+
+  const toggleGuide = () => {
+    setShowGuide((prev) => {
+      const next = !prev
+      localStorage.setItem(GUIDE_PREF_KEY, next ? '1' : '0')
+      return next
+    })
+  }
 
   const notify = useCallback((msg: string, isError?: boolean) => {
     setToast({ msg, isError })
@@ -130,7 +254,7 @@ export function App() {
           fontWeight: 600,
         }}
       >
-        Initializing ForgePlan MES...
+        Connecting to Veda Engineering Production Workspace...
       </div>
     )
   }
@@ -151,28 +275,12 @@ export function App() {
           fontWeight: 600,
         }}
       >
-        Loading manufacturing workspace...
+        Loading Veda Engineering production register...
       </div>
     )
   }
 
-  const tabMeta: Record<ActiveTab, { title: string; editableRoles: UserRole[] }> = {
-    dashboard: { title: 'Production Dashboard', editableRoles: [] },
-    otm: { title: 'OTM - PROD · Master Item Register', editableRoles: ['admin', 'planner'] },
-    daily: {
-      title: 'Daily Plan · Shop-Floor Log',
-      editableRoles: ['admin', 'planner', 'supervisor'],
-    },
-    gantt: {
-      title: 'Monthly Plan · Interactive Gantt',
-      editableRoles: ['admin', 'planner', 'supervisor'],
-    },
-    mis: { title: 'MIS · Plan vs Actual & Cost/Kg', editableRoles: ['admin'] },
-    masters: { title: 'Masters & Role Access', editableRoles: ['admin'] },
-    guide: { title: 'Workflow Guide & Audit Log', editableRoles: [] },
-  }
-
-  const currentTabInfo = tabMeta[activeTab]
+  const currentTabInfo = TAB_CONFIG[activeTab]
   const isCurrentEditable = currentTabInfo.editableRoles.includes(user.role)
 
   return (
@@ -180,15 +288,20 @@ export function App() {
       {/* Sidebar Navigation */}
       <aside className="sidebar">
         <div className="sidebar-brand">
-          <div className="brand-mark">FP</div>
-          <div>
-            <div className="brand-title">ForgePlan MES</div>
-            <div className="brand-subtitle">Manufacturing Monthly Plan</div>
+          <div className="sidebar-brand-row">
+            <div className="brand-mark">VEPL</div>
+            <div>
+              <div className="brand-title">Veda Engineering</div>
+              <div className="brand-subtitle">Monthly Production Plan</div>
+            </div>
           </div>
+          <a className="vepl-portal-link" href="https://veplworks.com">
+            <ArrowLeft size={12} /> Back to veplworks.com
+          </a>
         </div>
 
         <nav className="sidebar-nav" aria-label="Main Navigation">
-          <div className="nav-section-label">Operations</div>
+          <div className="nav-section-label">Shop-Floor &amp; Schedule</div>
 
           <button
             id="nav-dashboard"
@@ -198,10 +311,16 @@ export function App() {
           >
             <span className="nav-btn-left">
               <LayoutDashboard size={16} />
-              Dashboard
+              <span className="nav-btn-text">
+                <span className="nav-btn-title">Dashboard</span>
+                <span className="nav-btn-desc">KPIs, delays &amp; project health</span>
+              </span>
             </span>
             {analytics.attentionList.length > 0 && (
-              <span className="nav-count-badge alert" title="Delayed / Overdue items">
+              <span
+                className="nav-count-badge alert"
+                title="Items currently Delayed or Delivery Overdue"
+              >
                 {analytics.attentionList.length}
               </span>
             )}
@@ -215,7 +334,10 @@ export function App() {
           >
             <span className="nav-btn-left">
               <ClipboardList size={16} />
-              OTM - PROD
+              <span className="nav-btn-text">
+                <span className="nav-btn-title">OTM - PROD</span>
+                <span className="nav-btn-desc">Master equipment &amp; PO register</span>
+              </span>
             </span>
             <span className="nav-count-badge">{analytics.computedOtmItems.length}</span>
           </button>
@@ -228,7 +350,10 @@ export function App() {
           >
             <span className="nav-btn-left">
               <Wrench size={16} />
-              Daily Plan
+              <span className="nav-btn-text">
+                <span className="nav-btn-title">Daily Plan</span>
+                <span className="nav-btn-desc">Log daily shop-floor work</span>
+              </span>
             </span>
             <span className="nav-count-badge">{analytics.computedDailyLogs.length}</span>
           </button>
@@ -241,12 +366,15 @@ export function App() {
           >
             <span className="nav-btn-left">
               <CalendarDays size={16} />
-              Monthly Plan
+              <span className="nav-btn-text">
+                <span className="nav-btn-title">Monthly Plan</span>
+                <span className="nav-btn-desc">Day-by-day interactive Gantt</span>
+              </span>
             </span>
           </button>
 
           <div className="nav-section-label" style={{ marginTop: 8 }}>
-            Management &amp; Setup
+            Management &amp; Masters
           </div>
 
           {user.role !== 'supervisor' && (
@@ -258,7 +386,10 @@ export function App() {
             >
               <span className="nav-btn-left">
                 <BarChart3 size={16} />
-                MIS &amp; Cost/Kg
+                <span className="nav-btn-text">
+                  <span className="nav-btn-title">MIS &amp; Cost/Kg</span>
+                  <span className="nav-btn-desc">Plan vs actual tonnage &amp; ₹/Kg</span>
+                </span>
               </span>
             </button>
           )}
@@ -271,7 +402,10 @@ export function App() {
           >
             <span className="nav-btn-left">
               <Database size={16} />
-              Masters
+              <span className="nav-btn-text">
+                <span className="nav-btn-title">Masters &amp; Roles</span>
+                <span className="nav-btn-desc">Projects, vendors &amp; staff access</span>
+              </span>
             </span>
             <span className="nav-count-badge">{analytics.enrichedProjects.length}</span>
           </button>
@@ -284,7 +418,10 @@ export function App() {
           >
             <span className="nav-btn-left">
               <BookOpen size={16} />
-              Workflow &amp; Audit
+              <span className="nav-btn-text">
+                <span className="nav-btn-title">Workflow &amp; Audit</span>
+                <span className="nav-btn-desc">Formula rules &amp; activity log</span>
+              </span>
             </span>
           </button>
         </nav>
@@ -340,17 +477,23 @@ export function App() {
       <div className="main-area">
         <header className="topbar">
           <div className="topbar-left">
-            <h1 className="page-heading">{currentTabInfo.title}</h1>
-            {activeTab !== 'dashboard' && activeTab !== 'guide' && (
-              <span className={`permission-pill ${isCurrentEditable ? 'editable' : ''}`}>
-                {isCurrentEditable ? `Editable (${user.role})` : `Read-Only (${user.role})`}
-              </span>
-            )}
+            <div className="topbar-heading-row">
+              <h1 className="page-heading">{currentTabInfo.title}</h1>
+              {activeTab !== 'dashboard' && activeTab !== 'guide' && (
+                <span className={`permission-pill ${isCurrentEditable ? 'editable' : ''}`}>
+                  {isCurrentEditable ? `Editable (${user.role})` : `Read-Only (${user.role})`}
+                </span>
+              )}
+            </div>
+            <p className="page-subheading">{currentTabInfo.subtitle}</p>
           </div>
 
           <div className="topbar-actions">
-            <label className="asof-control" title="Simulated TODAY() date for status & overdue formulas">
-              <span>As on:</span>
+            <label
+              className="asof-control"
+              title="Reference date (equivalent to Excel TODAY()) used to evaluate Delayed production & Overdue delivery formulas"
+            >
+              <span>Ref. Date:</span>
               <input
                 id="asof-date-input"
                 type="date"
@@ -362,10 +505,21 @@ export function App() {
             </label>
 
             <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={toggleGuide}
+              title="Show or hide the plain-English guide banner at the top of each screen"
+            >
+              <HelpCircle size={14} />
+              {showGuide ? 'Hide Guide' : 'Show Guide'}
+            </button>
+
+            <button
               id="open-excel-sync-btn"
               type="button"
               className="btn btn-primary"
               onClick={() => setExcelModalOpen(true)}
+              title="Download live data as multi-sheet .xlsx or import an updated workbook"
             >
               <FileSpreadsheet size={15} />
               Excel Sync (.xlsx)
@@ -374,6 +528,40 @@ export function App() {
         </header>
 
         <main className="page-content">
+          {showGuide && (
+            <section className="module-guide-banner" aria-label="Screen Guide">
+              <div className="module-guide-top">
+                <div>
+                  <div className="module-guide-title">
+                    <Info size={15} color="var(--brand-primary)" />
+                    {currentTabInfo.guideTitle}
+                  </div>
+                  <p className="module-guide-desc">{currentTabInfo.guideText}</p>
+                </div>
+                {currentTabInfo.showCellLegend && (
+                  <div className="cell-legend-strip">
+                    <span>
+                      <span className="cell-swatch editable" />
+                      <strong>Yellow</strong> = Editable Input
+                    </span>
+                    <span>
+                      <span className="cell-swatch auto" />
+                      <strong>Grey</strong> = Auto-Calculated Formula
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="module-guide-pills">
+                {currentTabInfo.highlights.map((h) => (
+                  <span key={h.label} className="guide-Step-pill">
+                    <strong>{h.label}:</strong> {h.detail}
+                  </span>
+                ))}
+              </div>
+            </section>
+          )}
+
           {activeTab === 'dashboard' && (
             <DashboardView
               asOfDate={asOfDate}
