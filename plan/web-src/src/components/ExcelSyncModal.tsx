@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Download, FileSpreadsheet, RefreshCw, Upload, X } from 'lucide-react'
 import { api } from '../api.ts'
-import type { UserRole } from '../shared/types.ts'
+import { isFullAccessRole, type UserRole } from '../shared/types.ts'
 
 interface ExcelSyncModalProps {
   userRole: UserRole
@@ -18,8 +18,8 @@ export function ExcelSyncModal({
   onRefresh,
   onNotify,
 }: ExcelSyncModalProps) {
-  const canImport = userRole === 'admin' || userRole === 'planner'
-  const isAdmin = userRole === 'admin'
+  const canImport = isFullAccessRole(userRole) || userRole === 'planner'
+  const isAdmin = isFullAccessRole(userRole)
 
   const [file, setFile] = useState<File | null>(null)
   const [mode, setMode] = useState<'merge' | 'replace'>('merge')

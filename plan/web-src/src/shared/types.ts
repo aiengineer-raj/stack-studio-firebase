@@ -1,4 +1,23 @@
-export type UserRole = 'admin' | 'planner' | 'supervisor'
+export type UserRole = 'admin' | 'project_manager' | 'planner' | 'supervisor'
+
+export function isFullAccessRole(role: UserRole): boolean {
+  return role === 'admin' || role === 'project_manager'
+}
+
+export function formatRoleLabel(role: string): string {
+  switch (role) {
+    case 'admin':
+      return 'Admin'
+    case 'project_manager':
+      return 'Project Manager'
+    case 'planner':
+      return 'Planner'
+    case 'supervisor':
+      return 'Supervisor'
+    default:
+      return role.replace(/_/g, ' ')
+  }
+}
 
 export interface UserPublic {
   id: number

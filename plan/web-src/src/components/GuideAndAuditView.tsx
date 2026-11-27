@@ -1,5 +1,6 @@
 import { ArrowRight, CheckCircle2 } from 'lucide-react'
 import type { AuditEntry } from '../api.ts'
+import { formatRoleLabel } from '../shared/types.ts'
 import { ProductionStatusBadge } from './StatusBadge.tsx'
 
 export function GuideAndAuditView({
@@ -196,7 +197,7 @@ export function GuideAndAuditView({
                     {new Date(a.created_at).toLocaleString()}
                   </td>
                   <td style={{ fontWeight: 600 }}>{a.user_name}</td>
-                  <td style={{ textTransform: 'capitalize' }}>{a.user_role}</td>
+                  <td>{formatRoleLabel(a.user_role)}</td>
                   <td className="mono" style={{ fontSize: 11.5, fontWeight: 600 }}>
                     <CheckCircle2
                       size={12}

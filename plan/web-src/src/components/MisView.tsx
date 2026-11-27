@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { Lock, Save } from 'lucide-react'
 import { api } from '../api.ts'
-import type {
-  ComputedMisMonthRow,
-  MisMonthlyCostRecord,
-  UserRole,
+import {
+  isFullAccessRole,
+  type ComputedMisMonthRow,
+  type MisMonthlyCostRecord,
+  type UserRole,
 } from '../shared/types.ts'
 import { ProgressDataBar } from './StatusBadge.tsx'
 
@@ -56,8 +57,8 @@ export function MisView({
   onRefresh,
   onNotify,
 }: MisViewProps) {
-  const isAdmin = userRole === 'admin'
-  const canChangeMonth = userRole === 'admin' || userRole === 'planner'
+  const isAdmin = isFullAccessRole(userRole)
+  const canChangeMonth = isFullAccessRole(userRole) || userRole === 'planner'
 
   const [draftCosts, setDraftCosts] = useState<Record<string, MisMonthlyCostRecord>>({})
   const [dirtyMonths, setDirtyMonths] = useState<Set<string>>(new Set())

@@ -24,7 +24,12 @@ import { MisView } from './components/MisView.tsx'
 import { MonthlyGanttView } from './components/MonthlyGanttView.tsx'
 import { type OtmFilterPreset, OtmProdView } from './components/OtmProdView.tsx'
 import { computeWorkspaceAnalytics } from './shared/calculations.ts'
-import type { UserPublic, UserRole, WorkspacePayload } from './shared/types.ts'
+import {
+  formatRoleLabel,
+  type UserPublic,
+  type UserRole,
+  type WorkspacePayload,
+} from './shared/types.ts'
 
 type ActiveTab = 'dashboard' | 'otm' | 'daily' | 'gantt' | 'mis' | 'masters' | 'guide'
 
@@ -66,10 +71,10 @@ const TAB_CONFIG: Record<
   otm: {
     title: 'OTM - PROD · Master Equipment Register',
     subtitle: 'Order-to-Manufacturing register for weights, drawings, material readiness, sub-vendor POs & dispatch',
-    editableRoles: ['admin', 'planner'],
+    editableRoles: ['admin', 'project_manager', 'planner'],
     guideTitle: 'How OTM - PROD Works (Master Item Schedule)',
     guideText:
-      'Each row represents one fabricable deliverable (chimney shell, tank, cone, ducting, or structure) linked to a Veda Project No from Masters. Planners & Admins enter weights, fabrication location (Shop vs Subvendor), and Plan Start / Plan End dates; % Complete and Production Status update automatically as Daily Plan logs come in.',
+      'Each row represents one fabricable deliverable (chimney shell, tank, cone, ducting, or structure) linked to a Veda Project No from Masters. Project Managers, Planners & Admins enter weights, fabrication location (Shop vs Subvendor), and Plan Start / Plan End dates; % Complete and Production Status update automatically as Daily Plan logs come in.',
     highlights: [
       { label: 'Final Wt (T)', detail: 'Uses Drawing Wt (Kg) if entered, else Cost Sheet Wt ÷ 1000' },
       { label: 'Committed Delivery', detail: 'Revised Agreed Date → else Customer Delivery → else Plan End' },
@@ -80,10 +85,10 @@ const TAB_CONFIG: Record<
   daily: {
     title: 'Daily Plan · Shop-Floor Fabrication Log',
     subtitle: 'Record daily bay execution, fit-up, rolling, welding, painting & completion status',
-    editableRoles: ['admin', 'planner', 'supervisor'],
+    editableRoles: ['admin', 'project_manager', 'planner', 'supervisor'],
     guideTitle: 'How Daily Shop-Floor Logging Updates the Entire Plan',
     guideText:
-      'Supervisors, Planners, and Admins log daily shop-floor progress here. Selecting a Project No automatically filters the Item dropdown to items registered in OTM - PROD. Every "Done" entry advances % Complete, and logging "Item Completed" immediately marks the OTM deliverable 100% Completed.',
+      'Supervisors, Planners, Project Managers, and Admins log daily shop-floor progress here. Selecting a Project No automatically filters the Item dropdown to items registered in OTM - PROD. Every "Done" entry advances % Complete, and logging "Item Completed" immediately marks the OTM deliverable 100% Completed.',
     highlights: [
       { label: 'Done', detail: 'Counts +1 working day toward Plan Days & % Complete' },
       { label: 'Item Completed', detail: 'Marks the OTM item 100% Completed on that date' },
@@ -94,7 +99,7 @@ const TAB_CONFIG: Record<
   gantt: {
     title: 'Monthly Plan · Interactive Gantt Matrix',
     subtitle: 'Day-by-day visual comparison of planned schedule bars vs logged shop-floor execution',
-    editableRoles: ['admin', 'planner', 'supervisor'],
+    editableRoles: ['admin', 'project_manager', 'planner', 'supervisor'],
     guideTitle: 'How to Read & Log Work from the Monthly Gantt',
     guideText:
       'This matrix overlays each item’s planned window (Plan Start → Plan End) with actual daily shop-floor entries for the chosen month. Click any day cell on any row to inspect what work was done on that date or log a new shop-floor entry directly.',
@@ -107,24 +112,24 @@ const TAB_CONFIG: Record<
   mis: {
     title: 'MIS · Monthly Tonnage & Factory Cost / Kg',
     subtitle: '12-month rolling Plan vs Achieved output, on-time dispatch rate & ₹/Kg fabrication cost ledger',
-    editableRoles: ['admin'],
+    editableRoles: ['admin', 'project_manager'],
     guideTitle: 'How MIS Tonnage & Cost-per-Kg Analytics Work',
     guideText:
-      'Sections A & B roll up automatically from OTM - PROD and Daily Plan across a 12-month window. In Section C, Admin / Management enters monthly factory expenses (Fixed, Sub-Contract, Direct Labour, Consumables, R&M) to compute real-time Total Expenses and Fabrication Cost per Kg (₹/Kg).',
+      'Sections A & B roll up automatically from OTM - PROD and Daily Plan across a 12-month window. In Section C, Admin / Project Manager enters monthly factory expenses (Fixed, Sub-Contract, Direct Labour, Consumables, R&M) to compute real-time Total Expenses and Fabrication Cost per Kg (₹/Kg).',
     highlights: [
       { label: 'Planned vs Achieved (T)', detail: 'Planned = Plan End in month · Achieved = Completion Date in month' },
       { label: 'Cost / Kg Formula', detail: 'Total Monthly Expenses (Rs.) ÷ (Completed Output Tons × 1,000)' },
-      { label: 'Role Security', detail: 'Visible to Planners & Admins; expense editing restricted to Admin' },
+      { label: 'Role Security', detail: 'Visible to Planners, Project Managers & Admins; expense editing requires Admin or Project Manager' },
     ],
     showCellLegend: true,
   },
   masters: {
     title: 'Masters & Veda Team Role Access',
     subtitle: 'Central register of customer projects, approved sub-vendors, dropdown lists & @vedaengg.com staff roles',
-    editableRoles: ['admin'],
+    editableRoles: ['admin', 'project_manager'],
     guideTitle: 'How Masters & Staff Role Access Control Work',
     guideText:
-      'Always register a new Project No and Customer Name here first before adding its items in OTM - PROD. Marking a project "Hold" here automatically pauses all its OTM items as "On Hold". Admins can also pre-authorize @vedaengg.com colleagues or switch anyone between Admin, Planner, and Supervisor.',
+      'Always register a new Project No and Customer Name here first before adding its items in OTM - PROD. Marking a project "Hold" here automatically pauses all its OTM items as "On Hold". Admins and Project Managers can also pre-authorize @vedaengg.com colleagues or switch anyone’s role.',
     highlights: [
       { label: 'Project Cascade', detail: 'Customer name & Hold status flow automatically to OTM & Daily Plan' },
       { label: 'Sub-Vendor List', detail: 'Populates the Sub-Vendor dropdown whenever Location = Subvendor' },
@@ -452,7 +457,7 @@ export function App() {
                 {user.email}
               </div>
               <span className="user-role-tag" style={{ marginTop: 3 }}>
-                {user.role}
+                {formatRoleLabel(user.role)}
               </span>
             </div>
             <button
@@ -481,7 +486,9 @@ export function App() {
               <h1 className="page-heading">{currentTabInfo.title}</h1>
               {activeTab !== 'dashboard' && activeTab !== 'guide' && (
                 <span className={`permission-pill ${isCurrentEditable ? 'editable' : ''}`}>
-                  {isCurrentEditable ? `Editable (${user.role})` : `Read-Only (${user.role})`}
+                  {isCurrentEditable
+                    ? `Editable (${formatRoleLabel(user.role)})`
+                    : `Read-Only (${formatRoleLabel(user.role)})`}
                 </span>
               )}
             </div>
