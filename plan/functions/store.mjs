@@ -1,7 +1,16 @@
-import { DEFAULT_ADMINS, displayNameFromEmail, emailOf, fail } from './auth.mjs';
+import {
+  DEFAULT_ROLE_MAP,
+  DEFAULT_ROLE_USERS,
+  VALID_ROLES,
+  displayNameFromEmail,
+  emailOf,
+  fail,
+  hasFullAccess,
+} from './auth.mjs';
 import { parseManufacturingWorkbook } from './excelService.mjs';
 
 const OTM_CHUNK_SIZE = 400;
+const DEFAULT_USERS_VERSION = 2;
 
 const DEFAULT_SUBVENDORS = [
   'VEPL Fabrication',
@@ -258,25 +267,55 @@ export function createPlanStore(db, getSeedBuffer) {
     if (seedPromise) return seedPromise;
     seedPromise = (async () => {
       const snap = await metaRef.get();
-      if (snap.exists && snap.data()?.seeded) return;
+      if (snap.exists && snap.data()?.seeded) {
+        if ((snap.data()?.defaultUsersVersion || 1) < DEFAULT_USERS_VERSION) {
+          await db.runTransaction(async (tx) => {
+            const [mSnap, uSnap] = await Promise.all([tx.get(metaRef), tx.get(usersRef)]);
+            const meta = mSnap.data() || {};
+            if ((meta.defaultUsersVersion || 1) >= DEFAULT_USERS_VERSION) return;
 
-      const counters = { user: 2, project: 0, subVendor: 0, otm: 0, daily: 0, audit: 1 };
-      const initialUsers = [
-        {
-          id: 1,
-          email: 'raj.patil@vedaengg.com',
-          name: 'Raj Patil',
-          role: 'admin',
-          department: 'Management & MIS',
-        },
-        {
-          id: 2,
-          email: 'rohit.hotkar@vedaengg.com',
-          name: 'Rohit Hotkar',
-          role: 'admin',
-          department: 'Management & MIS',
-        },
-      ];
+            const users = [...(uSnap.data()?.users || [])];
+            let nextUserId = Math.max(
+              meta.counters?.user || 0,
+              users.reduce((mx, u) => Math.max(mx, u.id || 0), 0)
+            );
+            for (const preset of DEFAULT_ROLE_USERS) {
+              const idx = users.findIndex((u) => u.email.toLowerCase() === preset.email);
+              if (idx < 0) {
+                nextUserId += 1;
+                users.push({ id: nextUserId, ...preset });
+              } else if (preset.email === 'ranjith.s@vedaengg.com') {
+                users[idx] = {
+                  ...users[idx],
+                  name: users[idx].name || preset.name,
+                  role: preset.role,
+                  department:
+                    !users[idx].department ||
+                    users[idx].department === 'Shop-Floor & Engineering'
+                      ? preset.department
+                      : users[idx].department,
+                };
+              }
+            }
+            tx.set(usersRef, { users });
+            tx.update(metaRef, {
+              'counters.user': nextUserId,
+              defaultUsersVersion: DEFAULT_USERS_VERSION,
+            });
+          });
+        }
+        return;
+      }
+
+      const initialUsers = DEFAULT_ROLE_USERS.map((u, idx) => ({ id: idx + 1, ...u }));
+      const counters = {
+        user: initialUsers.length,
+        project: 0,
+        subVendor: 0,
+        otm: 0,
+        daily: 0,
+        audit: 1,
+      };
 
       const buf = getSeedBuffer ? getSeedBuffer() : null;
       let built = {
@@ -319,6 +358,7 @@ export function createPlanStore(db, getSeedBuffer) {
       });
       await metaRef.set({
         seeded: true,
+        defaultUsersVersion: DEFAULT_USERS_VERSION,
         counters,
         projects: built.projects,
         subVendors: built.subVendors,
@@ -342,15 +382,18 @@ export function createPlanStore(db, getSeedBuffer) {
       const existing = users.find((u) => u.email.toLowerCase() === email);
       if (existing) return existing;
 
-      const hasAnyAdmin = users.some((u) => u.role === 'admin');
-      const role = DEFAULT_ADMINS.has(email) || !hasAnyAdmin ? 'admin' : 'supervisor';
+      const preset = DEFAULT_ROLE_MAP.get(email);
+      const hasAnyFullAccess = users.some((u) => hasFullAccess(u.role));
+      const role = preset ? preset.role : !hasAnyFullAccess ? 'admin' : 'supervisor';
       const nextId = (meta.counters?.user || users.length) + 1;
       const newUser = {
         id: nextId,
         email,
-        name: displayNameFromEmail(email),
+        name: preset?.name || displayNameFromEmail(email),
         role,
-        department: role === 'admin' ? 'Management & MIS' : 'Shop-Floor & Engineering',
+        department:
+          preset?.department ||
+          (hasFullAccess(role) ? 'Management & MIS' : 'Shop-Floor & Engineering'),
       };
       users.push(newUser);
       tx.set(usersRef, { users });
@@ -379,7 +422,7 @@ export function createPlanStore(db, getSeedBuffer) {
     const email = emailOf(rawEmail);
     const cleanName = String(name || '').trim();
     if (!cleanName) fail(400, 'Full name is required.');
-    if (!['admin', 'planner', 'supervisor'].includes(role)) fail(400, 'Invalid role.');
+    if (!VALID_ROLES.includes(role)) fail(400, 'Invalid role.');
     const cleanDept = String(department || '').trim();
 
     let savedUser = null;
@@ -392,8 +435,8 @@ export function createPlanStore(db, getSeedBuffer) {
       auditId = (meta.counters?.audit || 0) + 1;
 
       if (idx >= 0) {
-        if (users[idx].id === actor?.id && role !== 'admin') {
-          fail(400, 'You cannot remove your own Admin access.');
+        if (users[idx].id === actor?.id && !hasFullAccess(role)) {
+          fail(400, 'You cannot remove your own full-access role.');
         }
         savedUser = {
           ...users[idx],
@@ -428,9 +471,9 @@ export function createPlanStore(db, getSeedBuffer) {
 
   async function updateUserRole(targetId, role, actor) {
     await ensureSeeded();
-    if (!['admin', 'planner', 'supervisor'].includes(role)) fail(400, 'Invalid role.');
-    if (actor?.id === targetId && role !== 'admin') {
-      fail(400, 'You cannot remove your own Admin access.');
+    if (!VALID_ROLES.includes(role)) fail(400, 'Invalid role.');
+    if (actor?.id === targetId && !hasFullAccess(role)) {
+      fail(400, 'You cannot remove your own full-access role.');
     }
 
     let updated = null;

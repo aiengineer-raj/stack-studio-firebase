@@ -3,6 +3,7 @@ import {
   checkOtp,
   emailOf,
   fail,
+  hasFullAccess,
   hash,
   otpDigest,
   signSessionToken,
@@ -29,7 +30,7 @@ function getQueryParam(req, name) {
 
 function requireRoles(actor, ...allowed) {
   if (!actor) fail(401, 'Authentication required.');
-  if (!allowed.includes(actor.role)) {
+  if (!hasFullAccess(actor.role) && !allowed.includes(actor.role)) {
     fail(
       403,
       `Access denied. Role '${actor.role}' cannot perform this action (requires: ${allowed.join(', ')}).`

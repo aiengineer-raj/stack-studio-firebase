@@ -1,9 +1,34 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 
-export const DEFAULT_ADMINS = new Set([
-  'raj.patil@vedaengg.com',
-  'rohit.hotkar@vedaengg.com',
-]);
+export const VALID_ROLES = ['admin', 'project_manager', 'planner', 'supervisor'];
+export const FULL_ACCESS_ROLES = new Set(['admin', 'project_manager']);
+export const hasFullAccess = (role) => FULL_ACCESS_ROLES.has(role);
+
+export const DEFAULT_ROLE_USERS = [
+  {
+    email: 'raj.patil@vedaengg.com',
+    name: 'Raj Patil',
+    role: 'admin',
+    department: 'Management & MIS',
+  },
+  {
+    email: 'rohit.hotkar@vedaengg.com',
+    name: 'Rohit Hotkar',
+    role: 'admin',
+    department: 'Management & MIS',
+  },
+  {
+    email: 'ranjith.s@vedaengg.com',
+    name: 'Ranjith S',
+    role: 'project_manager',
+    department: 'Project Management',
+  },
+];
+
+export const DEFAULT_ROLE_MAP = new Map(DEFAULT_ROLE_USERS.map((u) => [u.email, u]));
+export const DEFAULT_ADMINS = new Set(
+  DEFAULT_ROLE_USERS.filter((u) => hasFullAccess(u.role)).map((u) => u.email)
+);
 
 export function fail(status, message) {
   const err = new Error(message);

@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react'
 import { Lock, Plus, Search, Trash2, UserPlus } from 'lucide-react'
 import { api } from '../api.ts'
-import type {
-  DropdownLists,
-  EnrichedProject,
-  ProjectStatus,
-  SubVendor,
-  UserPublic,
-  UserRole,
+import {
+  formatRoleLabel,
+  isFullAccessRole,
+  type DropdownLists,
+  type EnrichedProject,
+  type ProjectStatus,
+  type SubVendor,
+  type UserPublic,
+  type UserRole,
 } from '../shared/types.ts'
 import { ProductionStatusBadge } from './StatusBadge.tsx'
 
@@ -30,7 +32,7 @@ export function MastersView({
   onRefresh,
   onNotify,
 }: MastersProps) {
-  const isAdmin = userRole === 'admin'
+  const isAdmin = isFullAccessRole(userRole)
 
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
@@ -519,6 +521,7 @@ export function MastersView({
                 onChange={(e) => setURole(e.target.value as UserRole)}
               >
                 <option value="admin">Admin / Management</option>
+                <option value="project_manager">Project Manager (Full Access)</option>
                 <option value="planner">Production Planner</option>
                 <option value="supervisor">Shop-Floor Supervisor</option>
               </select>
@@ -558,17 +561,18 @@ export function MastersView({
                       {u.id !== currentUserId ? (
                         <select
                           className="select-control input-editable-yellow"
-                          style={{ height: 28, fontSize: 12, width: 170 }}
+                          style={{ height: 28, fontSize: 12, width: 205 }}
                           value={u.role}
                           onChange={(e) => handleRoleChange(u, e.target.value as UserRole)}
                         >
                           <option value="admin">Admin / Management</option>
+                          <option value="project_manager">Project Manager (Full Access)</option>
                           <option value="planner">Production Planner</option>
                           <option value="supervisor">Shop-Floor Supervisor</option>
                         </select>
                       ) : (
-                        <span style={{ textTransform: 'capitalize', fontWeight: 600 }}>
-                          {u.role} (You)
+                        <span style={{ fontWeight: 600 }}>
+                          {formatRoleLabel(u.role)} (You)
                         </span>
                       )}
                     </td>

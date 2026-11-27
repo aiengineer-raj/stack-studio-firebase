@@ -12,12 +12,13 @@ import {
 } from 'lucide-react'
 import { api } from '../api.ts'
 import { formatShortDate } from '../shared/calculations.ts'
-import type {
-  ComputedOtmItem,
-  DropdownLists,
-  MasterProject,
-  SubVendor,
-  UserRole,
+import {
+  isFullAccessRole,
+  type ComputedOtmItem,
+  type DropdownLists,
+  type MasterProject,
+  type SubVendor,
+  type UserRole,
 } from '../shared/types.ts'
 import { ProductionStatusBadge, ProgressDataBar } from './StatusBadge.tsx'
 
@@ -79,7 +80,7 @@ export function OtmProdView({
   onNotify,
   onLogWorkForItem,
 }: OtmProdProps) {
-  const canEdit = userRole === 'admin' || userRole === 'planner'
+  const canEdit = isFullAccessRole(userRole) || userRole === 'planner'
 
   const [search, setSearch] = useState('')
   const [projectFilter, setProjectFilter] = useState('')

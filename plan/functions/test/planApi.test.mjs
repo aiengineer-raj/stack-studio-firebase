@@ -304,4 +304,72 @@ test('ForgePlan MES Firebase handler: OTP auth, Excel seed, RBAC, CRUD & 2-way E
   });
   assert.equal(reimport.status, 200);
   assert.equal(reimport.body.summary.otmItems, 102);
+
+  // 8. Verify ranjith.s@vedaengg.com signs in as project_manager with full access
+  const reqRanjith = await callApi(handler, {
+    method: 'POST',
+    path: '/api/auth/request-code',
+    body: { email: 'ranjith.s@vedaengg.com' },
+  });
+  assert.equal(reqRanjith.status, 200);
+  const verifyRanjith = await callApi(handler, {
+    method: 'POST',
+    path: '/api/auth/verify-code',
+    body: {
+      email: 'ranjith.s@vedaengg.com',
+      challenge: reqRanjith.body.challenge,
+      code: sentEmails[2].code,
+    },
+  });
+  assert.equal(verifyRanjith.status, 200);
+  assert.equal(verifyRanjith.body.user.role, 'project_manager');
+  assert.equal(verifyRanjith.body.user.name, 'Ranjith S');
+  const pmToken = verifyRanjith.body.token;
+
+  // Project Manager can create projects, manage users, and edit MIS costs
+  const pmProj = await callApi(handler, {
+    method: 'POST',
+    path: '/api/projects',
+    token: pmToken,
+    body: { project_no: 'V99 1001', customer_name: 'PM Full Access Co', project_status: 'Active' },
+  });
+  assert.equal(pmProj.status, 200);
+
+  const pmMis = await callApi(handler, {
+    method: 'PUT',
+    path: '/api/mis/costs/2026-11',
+    token: pmToken,
+    body: { rent: 50000, electricity: 25000, remark: 'Updated by Project Manager' },
+  });
+  assert.equal(pmMis.status, 200);
+
+  const pmUsers = await callApi(handler, { path: '/api/users', token: pmToken });
+  assert.equal(pmUsers.status, 200);
+  assert.ok(pmUsers.body.users.some((u) => u.email === 'ranjith.s@vedaengg.com' && u.role === 'project_manager'));
+});
+
+test('Already-seeded Firestore DB automatically adds/upgrades ranjith.s@vedaengg.com to project_manager', async () => {
+  const db = createMockFirestore();
+  const root = db.collection('forgePlanMes').doc('main');
+  await root.collection('state').doc('meta').set({
+    seeded: true,
+    counters: { user: 3, project: 0, subVendor: 0, otm: 0, daily: 0, audit: 1 },
+    projects: [],
+    subVendors: [],
+    dropdowns: {},
+    misCosts: [],
+    settings: { mis_start_month: '2026-07', default_gantt_month: '2026-10' },
+  });
+  await root.collection('state').doc('users').set({
+    users: [
+      { id: 1, email: 'raj.patil@vedaengg.com', name: 'Raj Patil', role: 'admin', department: 'Management & MIS' },
+      { id: 2, email: 'rohit.hotkar@vedaengg.com', name: 'Rohit Hotkar', role: 'admin', department: 'Management & MIS' },
+      { id: 3, email: 'ranjith.s@vedaengg.com', name: 'Ranjith S', role: 'supervisor', department: 'Shop-Floor & Engineering' },
+    ],
+  });
+
+  const store = createPlanStore(db, () => null);
+  const user = await store.getUserByEmail('ranjith.s@vedaengg.com');
+  assert.equal(user.role, 'project_manager');
+  assert.equal(user.department, 'Project Management');
 });

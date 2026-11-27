@@ -383,7 +383,7 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: (user: UserP
                   <ShieldCheck size={17} color="var(--brand-primary)" style={{ marginTop: 2, flexShrink: 0 }} />
                   <div>
                     <div style={{ fontWeight: 700, fontSize: 12.5 }}>
-                      Admin / Management
+                      Admin / Project Manager
                     </div>
                     <div style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.4 }}>
                       Full access: Masters projects &amp; sub-vendors, staff role assignment, OTM
